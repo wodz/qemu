@@ -1216,7 +1216,7 @@ static DeviceState *YUV2RGB_create(hwaddr base)
     return dev;
 }
 
-/* PMU Block */
+/* GPIO Block */
 #define TYPE_ATJ213X_GPIO "atj213x-GPIO"
 #define ATJ213X_GPIO(obj) \
     OBJECT_CHECK(AtjGPIOState, (obj), TYPE_ATJ213X_GPIO)
@@ -1349,6 +1349,352 @@ static DeviceState *GPIO_create(hwaddr base)
     return dev;
 }
 
+/* DMAC Block */
+#define TYPE_ATJ213X_DMAC "atj213x-DMAC"
+#define ATJ213X_DMAC(obj) \
+    OBJECT_CHECK(AtjDMACState, (obj), TYPE_ATJ213X_DMAC)
+
+#define E_DMA_CH(n, offset) \
+    DMA##n##_MODE = ((offset) >> 2), \
+    DMA##n##_SRC, \
+    DMA##n##_DST, \
+    DMA##n##_CNT, \
+    DMA##n##_REM, \
+    DMA##n##_CMD, \
+    DMA##n##_Reserved0, \
+    DMA##n##_Reserved1 
+
+#define DMAC_CHANNELS_NUM 8
+   
+enum {
+    DMA_CTL,
+    DMA_IRQEN,
+    DMA_IRQPD,
+
+    E_DMA_CH(0, 0x100),
+    E_DMA_CH(1, 0x120),
+    E_DMA_CH(2, 0x140),
+    E_DMA_CH(3, 0x160),
+    E_DMA_CH(4, 0x180),
+    E_DMA_CH(5, 0x1a0),
+    E_DMA_CH(6, 0x1c0),
+    E_DMA_CH(7, 0x1e0),
+
+    DMAC_REG_NUM
+};
+
+struct AtjDMAChannel {
+    uint32_t mode;
+    uint32_t src;
+    uint32_t dst;
+    uint32_t cnt;
+    uint32_t rem;
+    uint32_t cmd;
+};
+typedef struct AtjDMAChannel AtjDMAChannel;
+
+struct AtjDMACState {
+    SysBusDevice parent_obj;
+    MemoryRegion regs_region;
+
+    /* global control */
+    uint32_t ctl;
+    uint32_t irqen;
+    uint32_t irqpd;
+
+    /* channel description */
+    AtjDMAChannel ch[DMAC_CHANNELS_NUM];
+
+    /* irq line */
+    qemu_irq dmac_irq;
+};
+typedef struct AtjDMACState AtjDMACState;
+
+static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
+{
+    AtjDMACState *s = opaque;
+    int ch_no;
+    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr);
+
+    addr >>= 2;
+    switch (addr)
+    {
+        case DMA_CTL:
+            return s->ctl;
+
+        case DMA_IRQEN:
+            return s->irqen;
+
+        case DMA_IRQPD:
+            return s->irqpd;
+
+        case DMA0_MODE:
+        case DMA1_MODE:
+        case DMA2_MODE:
+        case DMA3_MODE:
+        case DMA4_MODE:
+        case DMA5_MODE:
+        case DMA6_MODE:
+        case DMA7_MODE:
+            ch_no = (addr - DMA0_MODE)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].mode;
+
+        case DMA0_SRC:
+        case DMA1_SRC:
+        case DMA2_SRC:
+        case DMA3_SRC:
+        case DMA4_SRC:
+        case DMA5_SRC:
+        case DMA6_SRC:
+        case DMA7_SRC:
+            ch_no = (addr - DMA0_SRC)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].src;
+
+        case DMA0_DST:
+        case DMA1_DST:
+        case DMA2_DST:
+        case DMA3_DST:
+        case DMA4_DST:
+        case DMA5_DST:
+        case DMA6_DST:
+        case DMA7_DST:
+            ch_no = (addr - DMA0_DST)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].dst;
+
+        case DMA0_CNT:
+        case DMA1_CNT:
+        case DMA2_CNT:
+        case DMA3_CNT:
+        case DMA4_CNT:
+        case DMA5_CNT:
+        case DMA6_CNT:
+        case DMA7_CNT:
+            ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].dst;
+
+        case DMA0_REM:
+        case DMA1_REM:
+        case DMA2_REM:
+        case DMA3_REM:
+        case DMA4_REM:
+        case DMA5_REM:
+        case DMA6_REM:
+        case DMA7_REM:
+            ch_no = (addr - DMA0_REM)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].rem;
+
+        case DMA0_CMD:
+        case DMA1_CMD:
+        case DMA2_CMD:
+        case DMA3_CMD:
+        case DMA4_CMD:
+        case DMA5_CMD:
+        case DMA6_CMD:
+        case DMA7_CMD:
+            ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
+            return s->ch[ch_no].rem;
+
+        default:
+            qemu_log("%s() Restricted area access\n", __func__);
+            return 0;
+    }
+}
+
+static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
+{
+    AtjDMACState *s = opaque;
+    int ch_no;
+    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+
+    addr >>= 2;
+    switch (addr)
+    {
+        case DMA_CTL:
+            s->ctl = value;
+            break;
+
+        case DMA_IRQEN:
+            s->irqen = value;
+            break;
+
+        case DMA_IRQPD:
+            s->irqpd = value;
+            break;
+
+        case DMA0_MODE:
+        case DMA1_MODE:
+        case DMA2_MODE:
+        case DMA3_MODE:
+        case DMA4_MODE:
+        case DMA5_MODE:
+        case DMA6_MODE:
+        case DMA7_MODE:
+            ch_no = (addr - DMA0_MODE)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].mode = value;
+            break;
+
+        case DMA0_SRC:
+        case DMA1_SRC:
+        case DMA2_SRC:
+        case DMA3_SRC:
+        case DMA4_SRC:
+        case DMA5_SRC:
+        case DMA6_SRC:
+        case DMA7_SRC:
+            ch_no = (addr - DMA0_SRC)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].src = value;
+            break;
+
+        case DMA0_DST:
+        case DMA1_DST:
+        case DMA2_DST:
+        case DMA3_DST:
+        case DMA4_DST:
+        case DMA5_DST:
+        case DMA6_DST:
+        case DMA7_DST:
+            ch_no = (addr - DMA0_DST)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].dst = value;
+            break;
+
+        case DMA0_CNT:
+        case DMA1_CNT:
+        case DMA2_CNT:
+        case DMA3_CNT:
+        case DMA4_CNT:
+        case DMA5_CNT:
+        case DMA6_CNT:
+        case DMA7_CNT:
+            ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].dst = value;
+            break;
+
+        case DMA0_REM:
+        case DMA1_REM:
+        case DMA2_REM:
+        case DMA3_REM:
+        case DMA4_REM:
+        case DMA5_REM:
+        case DMA6_REM:
+        case DMA7_REM:
+            ch_no = (addr - DMA0_REM)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].rem = value;
+            break;
+
+        case DMA0_CMD:
+        case DMA1_CMD:
+        case DMA2_CMD:
+        case DMA3_CMD:
+        case DMA4_CMD:
+        case DMA5_CMD:
+        case DMA6_CMD:
+        case DMA7_CMD:
+            ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
+            s->ch[ch_no].rem = value;
+
+        default:
+            qemu_log("%s() Restricted area access\n", __func__);
+    }
+};
+
+static const MemoryRegionOps DMAC_mmio_ops = {
+    .read = DMAC_read,
+    .write = DMAC_write,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static void DMAC_reset(DeviceState *d)
+{
+    AtjDMACState *s = ATJ213X_DMAC(d);
+
+    s->ctl = 0;
+    s->irqen = 0;
+    s->irqpd = 0;
+    memset(s->ch, 0, sizeof(s->ch));
+}
+
+static void DMAC_init(Object *obj)
+{
+    AtjDMACState *s = ATJ213X_DMAC(obj);
+    SysBusDevice *dev = SYS_BUS_DEVICE(obj);
+
+    memory_region_init_io(&s->regs_region, obj, &DMAC_mmio_ops, s, TYPE_ATJ213X_DMAC, DMAC_REG_NUM * 4);
+    sysbus_init_mmio(dev, &s->regs_region);
+}
+
+static void DMAC_realize(DeviceState *dev, Error **errp)
+{
+}
+
+static const VMStateDescription vmstate_DMAC_ch = {
+    .name = "atj213x_DMAC_channel",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(mode, AtjDMAChannel),
+        VMSTATE_UINT32(src, AtjDMAChannel),
+        VMSTATE_UINT32(dst, AtjDMAChannel),
+        VMSTATE_UINT32(cnt, AtjDMAChannel),
+        VMSTATE_UINT32(rem, AtjDMAChannel),
+        VMSTATE_UINT32(cmd, AtjDMAChannel),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription vmstate_DMAC = {
+    .name = TYPE_ATJ213X_DMAC,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(ctl, AtjDMACState),
+        VMSTATE_UINT32(irqen, AtjDMACState),
+        VMSTATE_UINT32(irqpd, AtjDMACState),
+        VMSTATE_STRUCT_ARRAY(ch, AtjDMACState, DMAC_CHANNELS_NUM,
+                             1, vmstate_DMAC_ch, AtjDMAChannel),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void DMAC_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    dc->realize = DMAC_realize;
+    dc->reset = DMAC_reset;
+    dc->vmsd = &vmstate_DMAC;
+    //dc->props = milkymist_sysctl_properties;
+}
+
+static const TypeInfo DMAC_info = {
+    .name          = TYPE_ATJ213X_DMAC,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(AtjDMACState),
+    .instance_init = DMAC_init,
+    .class_init    = DMAC_class_init,
+};
+
+static void DMAC_register_types(void)
+{
+    type_register_static(&DMAC_info);
+}
+
+type_init(DMAC_register_types)
+
+
+static DeviceState *DMAC_create(hwaddr base)
+{
+    DeviceState *dev;
+    dev = qdev_create(NULL, TYPE_ATJ213X_DMAC);
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+    return dev;
+}
+
 static void
 mips_atjsim_init(MachineState *machine)
 {
@@ -1445,6 +1791,9 @@ mips_atjsim_init(MachineState *machine)
 
     /* GPIO */
     GPIO_create(0x101c0000);
+
+   /* DMAC */
+   DMAC_create(0x10060000);
 }
 
 static void mips_atjsim_machine_init(MachineClass *mc)
