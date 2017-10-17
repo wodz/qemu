@@ -1360,9 +1360,7 @@ static DeviceState *GPIO_create(hwaddr base)
     DMA##n##_DST, \
     DMA##n##_CNT, \
     DMA##n##_REM, \
-    DMA##n##_CMD, \
-    DMA##n##_Reserved0, \
-    DMA##n##_Reserved1 
+    DMA##n##_CMD 
 
 #define DMAC_CHANNELS_NUM 8
    
@@ -1409,6 +1407,88 @@ struct AtjDMACState {
     qemu_irq dmac_irq;
 };
 typedef struct AtjDMACState AtjDMACState;
+
+static void DMAC_update_irq(AtjDMACState *s)
+{
+    if (s->irqen & s->irqpd)
+    {
+        qemu_irq_raise(s->dmac_irq);
+    }
+    else
+    {
+        qemu_irq_lower(s->dmac_irq);
+    }
+}
+
+/* CHECK on hardware how does behave chan->src, chan->dst chan->rem, chan->cnt */
+static void DMAC_dma_run(AtjDMACState *s, int ch_no)
+{
+    uint8_t buf[4];
+
+    AtjDMAChannel *chan = &s->ch[ch_no];
+    uint32_t src = chan->src;
+    uint32_t dst = chan->dst;
+    chan->rem = chan->cnt;
+
+    unsigned int stranwid = 1 << ((chan->mode >> 1) & 0x03);
+    unsigned int dtranwid = 1 << ((chan->mode >> 17) & 0x03);
+
+    while (chan->rem)
+    {
+        /* DMA will transfer in 8bit mode when remain counter is less
+         * than Tran_Wide.
+         */
+        stranwid = (chan->rem < stranwid) ? 1 : stranwid;
+        dtranwid = (chan->rem < dtranwid) ? 1 : dtranwid;
+
+        int xsize = (dtranwid < stranwid) ? stranwid : dtranwid;
+        for (int n = 0; n < xsize; n += stranwid)
+        {
+            cpu_physical_memory_read(src, buf + n, stranwid);
+
+            if (!(chan->mode & 1))
+            {
+                /* NOT source fixed mode */
+                if (chan->mode & (1 << 9))
+                {
+                    /* SDIR = 1 - decrease */
+                    src -= stranwid;
+                }
+                else
+                {
+                    /* SDIR = 0 - increase */
+                    src += stranwid;
+                }
+            }
+        }
+
+        for (int n = 0; n < xsize; n += dtranwid)
+        {
+            cpu_physical_memory_write(dst, buf + n, dtranwid);
+
+            if (!(chan->mode & (1 << 16)))
+            {
+                if (chan->mode & (1 << 25))
+                {
+                    dst -= dtranwid;
+                }
+                else
+                {
+                    dst += dtranwid;
+                }
+            }
+        }
+        chan->rem -= xsize;
+    }
+
+    /* We do not simulate half transfer interrupt
+     * it is assumed that whole transaction runs to the complete.
+     * We toggle irq pending flag however
+     */
+    s->irqpd |= 3 << ch_no;
+    chan->cmd &= ~1;
+    DMAC_update_irq(s);
+}
 
 static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
 {
@@ -1515,10 +1595,12 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 
         case DMA_IRQEN:
             s->irqen = value;
+            DMAC_update_irq(s);
             break;
 
         case DMA_IRQPD:
-            s->irqpd = value;
+            s->irqpd &= ~value;
+            DMAC_update_irq(s);
             break;
 
         case DMA0_MODE:
@@ -1566,7 +1648,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA6_CNT:
         case DMA7_CNT:
             ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
-            s->ch[ch_no].dst = value;
+            s->ch[ch_no].cnt = value;
             break;
 
         case DMA0_REM:
@@ -1590,7 +1672,11 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA6_CMD:
         case DMA7_CMD:
             ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
-            s->ch[ch_no].rem = value;
+            s->ch[ch_no].cmd = value;
+            if (value & 1)
+            {
+                DMAC_dma_run(s, ch_no);
+            }
 
         default:
             qemu_log("%s() Restricted area access\n", __func__);
@@ -1624,6 +1710,8 @@ static void DMAC_init(Object *obj)
 
     memory_region_init_io(&s->regs_region, obj, &DMAC_mmio_ops, s, TYPE_ATJ213X_DMAC, DMAC_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
+
+    qdev_init_gpio_out(DEVICE(obj), &s->dmac_irq, 1);
 }
 
 static void DMAC_realize(DeviceState *dev, Error **errp)
@@ -1686,12 +1774,14 @@ static void DMAC_register_types(void)
 type_init(DMAC_register_types)
 
 
-static DeviceState *DMAC_create(hwaddr base)
+static DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
 {
     DeviceState *dev;
     dev = qdev_create(NULL, TYPE_ATJ213X_DMAC);
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+
+    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_DMA));
     return dev;
 }
 
@@ -1793,7 +1883,7 @@ mips_atjsim_init(MachineState *machine)
     GPIO_create(0x101c0000);
 
    /* DMAC */
-   DMAC_create(0x10060000);
+   DMAC_create(0x10060000, intc);
 }
 
 static void mips_atjsim_machine_init(MachineClass *mc)
