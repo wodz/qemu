@@ -1550,7 +1550,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_CNT:
         case DMA7_CNT:
             ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].dst;
+            return s->ch[ch_no].cnt;
 
         case DMA0_REM:
         case DMA1_REM:
@@ -1572,7 +1572,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_CMD:
         case DMA7_CMD:
             ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].rem;
+            return s->ch[ch_no].cmd;
 
         default:
             qemu_log("%s() Restricted area access\n", __func__);
