@@ -890,6 +890,163 @@ static DeviceState *RTC_create(hwaddr base, AtjCMUState *cmu, AtjINTCState *intc
     return dev;
 }
 
+/* SDC Block */
+#define TYPE_ATJ213X_SDC "atj213x-SDC"
+#define ATJ213X_SDC(obj) \
+    OBJECT_CHECK(AtjSDCState, (obj), TYPE_ATJ213X_SDC)
+
+enum {
+    SDC_CTL,
+    SDC_CMDRSP,
+    SDC_RW,
+    SDC_FIFOCTL,
+    SDC_CMD,
+    SDC_ARG,
+    SDC_CRC7,
+    SDC_RSPBUF0,
+    SDC_RSPBUF1,
+    SDC_RSPBUF2,
+    SDC_RSPBUF3,
+    SDC_RSPBUF4,
+    SDC_DAT,
+    SDC_CLK,
+    SDC_BYTECNT,
+    SDC_REG_NUM
+};
+
+struct AtjSDCState {
+    SysBusDevice parent_obj;
+    MemoryRegion regs_region;
+    SDState *card;
+    uint32_t regs[SDC_REG_NUM];
+};
+typedef struct AtjSDCState AtjSDCState;
+
+static void sd_command(void *opaque)
+{
+    SDRequest req;
+    uint8_t rsp[16];
+
+    req.cmd = s->regs[SDC_CMD] & 0x3f;
+    req.arg = s->regs[SDC_ARG];
+    
+    int len = sd_do_command(s->card, &req, rsp);
+
+    s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
+    s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
+    s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
+    s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
+}
+
+static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
+{
+    AtjSDCState *s = opaque;
+
+    addr >>= 2;
+    switch (addr)
+    {
+        default:
+            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
+            break;
+    }
+
+    return s->regs[addr];
+}
+
+static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
+{
+    AtjSDCState *s = opaque;
+    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+
+    addr >>= 2;
+    switch (addr)
+    {
+        default:
+            break;
+    }
+
+    s->regs[addr] = value;
+};
+
+static const MemoryRegionOps SDC_mmio_ops = {
+    .read = SDC_read,
+    .write = SDC_write,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static void SDC_reset(DeviceState *d)
+{
+    AtjSDCState *s = ATJ213X_SDC(d);
+
+    for (int i=0; i<SDC_REG_NUM; i++)
+    {
+        s->regs[i] = 0;
+    }
+}
+
+static void SDC_init(Object *obj)
+{
+    AtjSDCState *s = ATJ213X_SDC(obj);
+    SysBusDevice *dev = SYS_BUS_DEVICE(obj);
+
+    memory_region_init_io(&s->regs_region, obj, &SDC_mmio_ops, s, TYPE_ATJ213X_SDC, SDC_REG_NUM * 4);
+    sysbus_init_mmio(dev, &s->regs_region);
+}
+
+static void SDC_realize(DeviceState *dev, Error **errp)
+{
+}
+
+static const VMStateDescription vmstate_SDC = {
+    .name = TYPE_ATJ213X_SDC,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32_ARRAY(regs, AtjSDCState, SDC_REG_NUM),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void SDC_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    dc->realize = SDC_realize;
+    dc->reset = SDC_reset;
+    dc->vmsd = &vmstate_SDC;
+    //dc->props = milkymist_sysctl_properties;
+}
+
+static const TypeInfo SDC_info = {
+    .name          = TYPE_ATJ213X_SDC,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(AtjSDCState),
+    .instance_init = SDC_init,
+    .class_init    = SDC_class_init,
+};
+
+static void SDC_register_types(void)
+{
+    type_register_static(&SDC_info);
+}
+
+type_init(SDC_register_types)
+
+
+static DeviceState *SDC_create(hwaddr base)
+{
+    DeviceState *dev;
+    dev = qdev_create(NULL, TYPE_ATJ213X_SDC);
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+    return dev;
+}
+
 /* YUV2RGB block */
 #define TYPE_ATJ213X_YUV2RGB "atj213x-YUV2RGB"
 #define ATJ213X_YUV2RGB(obj) \
@@ -1936,6 +2093,9 @@ mips_atjsim_init(MachineState *machine)
 
     /* RTC */
     RTC_create(0x10018000, cmu, intc);
+
+    /* SDC */
+    SDC_create(0x100b0000);
 
     /* YUV2RGB */
     YUV2RGB_create(0x100f0000);
