@@ -1382,6 +1382,7 @@ enum {
 };
 
 struct AtjDMAChannel {
+    QEMUTimer *timer;
     uint32_t mode;
     uint32_t src;
     uint32_t dst;
@@ -1421,7 +1422,7 @@ static void DMAC_update_irq(AtjDMACState *s)
 }
 
 /* CHECK on hardware how does behave chan->src, chan->dst chan->rem, chan->cnt */
-static void DMAC_dma_run(AtjDMACState *s, int ch_no)
+static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
 {
     uint8_t buf[4];
 
@@ -1487,7 +1488,59 @@ static void DMAC_dma_run(AtjDMACState *s, int ch_no)
      */
     s->irqpd |= 3 << ch_no;
     chan->cmd &= ~1;
+
+    timer_del(chan->timer);
     DMAC_update_irq(s);
+}
+
+/* TODO: calculate actual delay based on:
+ * a) amount of data to be transfered
+ * b) fifo/mem freq
+ */
+static void DMAC_ch_run(AtjDMACState *s, int ch_no)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    timer_mod(s->ch[ch_no].timer, now + 300);
+}
+
+static void DMAC_ch0_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch1_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch2_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch3_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch4_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch5_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch6_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch7_cb(void *opaque)
+{
+    DMAC_dma_xfer(opaque, 0);
 }
 
 static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
@@ -1675,7 +1728,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             s->ch[ch_no].cmd = value;
             if (value & 1)
             {
-                DMAC_dma_run(s, ch_no);
+                DMAC_ch_run(s, ch_no);
             }
 
         default:
@@ -1700,7 +1753,6 @@ static void DMAC_reset(DeviceState *d)
     s->ctl = 0;
     s->irqen = 0;
     s->irqpd = 0;
-    memset(s->ch, 0, sizeof(s->ch));
 }
 
 static void DMAC_init(Object *obj)
@@ -1712,6 +1764,15 @@ static void DMAC_init(Object *obj)
     sysbus_init_mmio(dev, &s->regs_region);
 
     qdev_init_gpio_out(DEVICE(obj), &s->dmac_irq, 1);
+
+    s->ch[0].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch0_cb, (void *)s);
+    s->ch[1].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch1_cb, (void *)s);
+    s->ch[2].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch2_cb, (void *)s);
+    s->ch[3].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch3_cb, (void *)s);
+    s->ch[4].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch4_cb, (void *)s);
+    s->ch[5].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch5_cb, (void *)s);
+    s->ch[6].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch6_cb, (void *)s);
+    s->ch[7].timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, DMAC_ch7_cb, (void *)s);
 }
 
 static void DMAC_realize(DeviceState *dev, Error **errp)
