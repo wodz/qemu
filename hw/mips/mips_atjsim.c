@@ -918,11 +918,12 @@ struct AtjSDCState {
     SysBusDevice parent_obj;
     MemoryRegion regs_region;
     SDState *card;
+    qemu_irq sdc_irq;
     uint32_t regs[SDC_REG_NUM];
 };
 typedef struct AtjSDCState AtjSDCState;
 
-static void sd_command(void *opaque)
+static void sd_command(AtjSDC *s)
 {
     SDRequest req;
     uint8_t rsp[16];
@@ -932,10 +933,54 @@ static void sd_command(void *opaque)
     
     int len = sd_do_command(s->card, &req, rsp);
 
-    s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
-    s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
-    s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
-    s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
+    /* response request bitfield
+     * response    | len|CMDRSP| crc 
+     * r1, r1b, r6 |  4 | bit1 | CRC7
+     * r0          |  0 | bit2 | N/A
+     * r3          |  4 | bit3 | no CRC7
+     * r2          | 16 | bit4 | CRC7
+     */
+    if ( ((s->regs[SDC_CMDRSP] & (1<<2)) && (len != 0)) ||
+         ((s->regs[SDC_CMDRSP] & (1<<1)) && (len != 4)) ||
+         ((s->regs[SDC_CMDRSP] & (1<<3)) && (len != 4)) ||
+         ((s->regs[SDC_CMDRSP] & (1<<4)) && (len != 16)) )
+    {
+        qemu_log("%s() requested response != received\n", __func__);
+    }
+
+    switch (len):
+    {
+        case 0:
+            s->regs[SDC_RSPBUF0] = 0;
+            s->regs[SDC_RSPBUF1] = 0;
+            s->regs[SDC_RSPBUF2] = 0;
+            s->regs[SDC_RSPBUF3] = 0;
+            break;
+
+        case 4:
+            s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
+            s->regs[SDC_RSPBUF1] = 0;
+            s->regs[SDC_RSPBUF2] = 0;
+            s->regs[SDC_RSPBUF3] = 0;
+            break;
+
+        case 16:
+            s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
+            s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
+            s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
+            s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
+            break;
+
+        default:
+            qemu_log("%s() invalid reponse len\n", __func__);
+    }
+
+    s->regs[SDC_CMDRSP] = 0;
+}
+
+static bool SDC_enabled(AtjSDCState *s)
+{
+    return (s->regs[SDC_CTL] & (1<<7)) ? true : false;
 }
 
 static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
@@ -945,6 +990,17 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
     addr >>= 2;
     switch (addr)
     {
+        case SDC_DAT:
+            if (!SDC_enabled(s))
+            {
+                return 0xffffffff;
+            }
+            uint32_t r = sd_read_data(s->card) << 24 |
+                         sd_read_data(s->card) << 16 |
+                         sd_read_data(s->card) << 8  |
+                         sd_read_data(s->card);
+            return r;
+
         default:
             qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
             break;
@@ -957,15 +1013,48 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjSDCState *s = opaque;
     qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    s->regs[addr] = value;
 
     addr >>= 2;
     switch (addr)
     {
+        case SDC_CTL:
+            int datawid = value & 3;
+            qemu_log("%s() SD interface data width: %d\n", datawid ? ((datawid > 1) ? 8 : 4) : 1);
+            break;
+
+        case SDC_CMDRSP:
+            if (!SDC_enabled(s))
+            {
+                break;
+            }
+
+            if (value == 1)
+            {
+                s->regs[addr] &= ~1;
+            }
+            else if (value & (0xf << 1))
+            {
+                sd_command(s);
+            }
+            break;
+
+        case SDC_DAT:
+            if (!SDC_enabled(s))
+            {
+                break;
+            }
+
+            sd_write_data(s->card, (value >> 24) & 0xff);
+            sd_write_data(s->card, (value >> 16) & 0xff);
+            sd_write_data(s->card, (value >> 8) & 0xff);
+            sd_write_data(s->card, value & 0xff);
+            break;
+
         default:
             break;
     }
 
-    s->regs[addr] = value;
 };
 
 static const MemoryRegionOps SDC_mmio_ops = {
@@ -995,6 +1084,10 @@ static void SDC_init(Object *obj)
 
     memory_region_init_io(&s->regs_region, obj, &SDC_mmio_ops, s, TYPE_ATJ213X_SDC, SDC_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
+
+    DriveInfo *dinfo = drive_get_next(IF_SD);
+    BlockBackend *blk = dinfo ? blk_by_legacy_dinfo(dinfo) : NULL;
+    s->card = sd_init(blk, false);
 }
 
 static void SDC_realize(DeviceState *dev, Error **errp)
