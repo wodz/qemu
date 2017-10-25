@@ -308,7 +308,7 @@ static void PMU_lradc_set(void *opaque, int value)
     AtjPMUState *s = opaque;
     uint32_t tmp =  s->regs[PMU_LRADC];
     tmp &= ~(0xf << 24);
-    tmp |= (value & 0x0f);
+    tmp |= (value & 0x0f) << 24;
     s->regs[PMU_LRADC] = tmp;
 }
 
@@ -361,8 +361,10 @@ static void PMU_reset(DeviceState *d)
 
     for (int i=0; i<PMU_REG_NUM; i++)
     {
-        s->regs[i] = 1;
+        s->regs[i] = 0;
     }
+
+    s->regs[PMU_LRADC] = 0xf<<24;
 }
 
 static void PMU_init(Object *obj)
@@ -1513,14 +1515,15 @@ static void atj_put_key(void * opaque, int keycode)
     AtjPMUState *pmu = s->pmu;
     int down;
 
+qemu_log("%s() keycode: 0x%x\n", __func__, keycode);
 
     if (keycode == 0xe0 && !s->extension)
     {
-        s->extension = 0x80;
+        s->extension = (0xe0 << 8);
         return;
     }
 
-    down = (keycode & 0x80) == 0;
+    down = (keycode & 0x80) ? 0 : 1;
     keycode = (keycode & 0x7f) | s->extension;
 
     for (int i = 0; i < s->num_buttons; i++)
@@ -1585,7 +1588,7 @@ static const VMStateDescription vmstate_atj_buttons = {
     }
 };
 
-static void atj_button_init(int n, qemu_irq *irq, const int *type, const int *keycode, void *pmu)
+static void atj_button_init(int n, atj_button *button_desc, void *pmu)
 {
     atj_button_state *s;
     int i;
@@ -1593,9 +1596,11 @@ static void atj_button_init(int n, qemu_irq *irq, const int *type, const int *ke
     s = g_new0(atj_button_state, 1);
     s->buttons = g_new0(atj_button, n);
     for (i = 0; i < n; i++) {
-        s->buttons[i].irq = irq[i];
-        s->buttons[i].keycode = keycode[i];
-        s->buttons[i].type = type[i];
+        s->buttons[i].irq = button_desc[i].irq;
+        s->buttons[i].keycode = button_desc[i].keycode;
+        s->buttons[i].type = button_desc[i].type;
+        s->buttons[i].adc_val = button_desc[i].adc_val;
+        s->buttons[i].pressed = 0;
     }
     s->num_buttons = n;
     s->pmu = pmu;
@@ -1644,6 +1649,10 @@ static uint64_t GPIO_read(void *opaque, hwaddr  addr, unsigned size)
     addr >>= 2;
     switch (addr)
     {
+        case GPIO_ADAT:
+            qemu_log("%s() GPIO_ADAT: 0x%x\n", __func__, s->regs[addr]);
+            break;
+
         default:
             qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
             break;
@@ -1679,12 +1688,12 @@ static const MemoryRegionOps GPIO_mmio_ops = {
 
 static void GPIO_reset(DeviceState *d)
 {
-    AtjGPIOState *s = ATJ213X_GPIO(d);
+//    AtjGPIOState *s = ATJ213X_GPIO(d);
 
-    for (int i=0; i<GPIO_REG_NUM; i++)
-    {
-        s->regs[i] = 0;
-    }
+//    for (int i=0; i<GPIO_REG_NUM; i++)
+//    {
+//        s->regs[i] = 0;
+//    }
 }
 
 static void GPIO_in_handler(void * opaque, int n_IRQ, int level)
@@ -1730,21 +1739,11 @@ static void GPIO_init(Object *obj)
 
 static void GPIO_realize(DeviceState *dev, Error **errp)
 {
-    /* keycodes for 'h', 'p', PAGE_UP, PAGE_DOWN */
-    static const int keycodes[] = { 0x23, 0x19, 0xc9, 0xd1 };
-    static const int types[] = { KEY_BISTABLE, KEY_MONOSTABLE, KEY_MONOSTABLE, KEY_MONOSTABLE };
-    qemu_irq key_irqs[4];
 
     AtjGPIOState *s = (AtjGPIOState *)dev;
     qdev_init_gpio_in(dev, GPIO_in_handler, 2*32);
     qdev_init_gpio_out(dev, s->gpio_out, 2*32);
 
-    key_irqs[0] = qdev_get_gpio_in(dev, 10); /* hold GPIOA10 */
-    key_irqs[1] = qdev_get_gpio_in(dev, 8); /* power GPIOA8 */
-    key_irqs[2] = qdev_get_gpio_in(dev, 12); /* vol+ GPIOA12 */
-    key_irqs[3] = qdev_get_gpio_in(dev, 32+31); /* vol- GPIOB31 */
-
-    atj_button_init(4, key_irqs, types, keycodes);
 }
 
 static const VMStateDescription vmstate_GPIO = {
@@ -2370,7 +2369,7 @@ mips_atjsim_init(MachineState *machine)
     cpu_mips_clock_init(cpu);
 
     /* PMU */
-    PMU_create(0x10000000);
+    AtjPMUState *pmu = (AtjPMUState *)PMU_create(0x10000000);
 
     /* INTC */
     AtjINTCState *intc = (AtjINTCState *)INTC_create(0x10020000, cpu);
@@ -2388,10 +2387,82 @@ mips_atjsim_init(MachineState *machine)
     YUV2RGB_create(0x100f0000);
 
     /* GPIO */
-    GPIO_create(0x101c0000);
+    AtjGPIOState *gpio = (AtjGPIOState *)GPIO_create(0x101c0000);
 
-   /* DMAC */
-   DMAC_create(0x10060000, intc);
+    /* DMAC */
+    DMAC_create(0x10060000, intc);
+
+
+    atj_button button_desc[10];
+
+    /* HOLD defaults to 'not engaged' */
+    button_desc[0].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 10)); /* GPIOA10 */
+    button_desc[0].type = KEY_BISTABLE;
+    button_desc[0].keycode = 0x23; /* 'h' */
+    button_desc[0].adc_val = 0;
+
+    /* POWER */    
+    button_desc[1].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 8)); /* GPIOA8 */
+    button_desc[1].type = KEY_MONOSTABLE;
+    button_desc[1].keycode = 0x01; /* ESC */
+    button_desc[1].adc_val = 0;
+
+    /* VOL+ */
+    button_desc[2].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 12)); /* GPIOA12 */
+    button_desc[2].type = KEY_MONOSTABLE;
+    button_desc[2].keycode = 0xe049; /* pageup */
+    button_desc[2].adc_val = 0;
+
+    /* VOL- */
+    button_desc[3].irq = qdev_get_gpio_in(DEVICE(gpio), 32 + 31); /* GPIOB31 */
+    button_desc[3].type = KEY_MONOSTABLE;
+    button_desc[3].keycode = 0xe051; /* pagedown */
+    button_desc[3].adc_val = 0;
+
+    /* LEFT */
+    button_desc[4].irq = NULL; /* adc key */
+    button_desc[4].type = KEY_ADC;
+    button_desc[4].keycode = 0xe04b; /* left */
+    button_desc[4].adc_val = 0x04;
+
+    /* RIGHT */
+    button_desc[5].irq = NULL; /* adc key */
+    button_desc[5].type = KEY_ADC;
+    button_desc[5].keycode = 0xe04d; /* right */
+    button_desc[5].adc_val = 0x0c;
+
+    /* UP */
+    button_desc[6].irq = NULL; /* adc key */
+    button_desc[6].type = KEY_ADC;
+    button_desc[6].keycode = 0xe048; /* up */
+    button_desc[6].adc_val = 0x02;
+
+    /* DOWN */
+    button_desc[7].irq = NULL; /* adc key */
+    button_desc[7].type = KEY_ADC;
+    button_desc[7].keycode = 0xe050; /* down */
+    button_desc[7].adc_val = 0x08;
+
+    /* SELECT */
+    button_desc[8].irq = NULL; /* adc key */
+    button_desc[8].type = KEY_ADC;
+    button_desc[8].keycode = 0x1c; /* enter */
+    button_desc[8].adc_val = 0x06;
+
+    /* HEADPHONE DETECT defaults to inserted */
+    button_desc[9].irq = qdev_get_gpio_in(DEVICE(gpio), 26); /* GPIOA26 */
+    button_desc[9].type = KEY_BISTABLE;
+    button_desc[9].keycode = 0x19; /* 'p' */
+    button_desc[9].adc_val = 0;
+ 
+    /* SD DETECT defaults to inserted */
+    button_desc[10].irq = qdev_get_gpio_in(DEVICE(gpio), 32 + 22); /* GPIOB22 */
+    button_desc[10].type = KEY_BISTABLE;
+    button_desc[10].keycode = 0x1f; /* 's' */
+    button_desc[10].adc_val = 0;
+
+    /* Initialize input layer */
+    atj_button_init(11, button_desc, (void *)pmu);
 }
 
 static void mips_atjsim_machine_init(MachineClass *mc)
