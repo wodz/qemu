@@ -991,15 +991,15 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
     switch (addr)
     {
         case SDC_DAT:
-            if (!SDC_enabled(s))
+            if (SDC_enabled(s) && s->regs[SDC_BYTECNT] > 0)
             {
-                return 0xffffffff;
+                uint32_t r = sd_read_data(s->card) << 24 |
+                             sd_read_data(s->card) << 16 |
+                             sd_read_data(s->card) << 8  |
+                             sd_read_data(s->card);
+                return r;
             }
-            uint32_t r = sd_read_data(s->card) << 24 |
-                         sd_read_data(s->card) << 16 |
-                         sd_read_data(s->card) << 8  |
-                         sd_read_data(s->card);
-            return r;
+            return 0xffffffff;
 
         default:
             qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
@@ -1040,15 +1040,14 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             break;
 
         case SDC_DAT:
-            if (!SDC_enabled(s))
+            if (SDC_enabled(s) && s->regs[SDC_BYTECNT] > 0)
             {
-                break;
+                sd_write_data(s->card, (value >> 24) & 0xff);
+                sd_write_data(s->card, (value >> 16) & 0xff);
+                sd_write_data(s->card, (value >> 8) & 0xff);
+                sd_write_data(s->card, value & 0xff);
+                s->regs[SDC_BYTECNT] -= size;
             }
-
-            sd_write_data(s->card, (value >> 24) & 0xff);
-            sd_write_data(s->card, (value >> 16) & 0xff);
-            sd_write_data(s->card, (value >> 8) & 0xff);
-            sd_write_data(s->card, value & 0xff);
             break;
 
         default:
@@ -1088,6 +1087,8 @@ static void SDC_init(Object *obj)
     DriveInfo *dinfo = drive_get_next(IF_SD);
     BlockBackend *blk = dinfo ? blk_by_legacy_dinfo(dinfo) : NULL;
     s->card = sd_init(blk, false);
+
+    qdev_init_gpio_out(DEVICE(obj), s->sdc_irq, 1);
 }
 
 static void SDC_realize(DeviceState *dev, Error **errp)
@@ -1131,12 +1132,14 @@ static void SDC_register_types(void)
 type_init(SDC_register_types)
 
 
-static DeviceState *SDC_create(hwaddr base)
+static DeviceState *SDC_create(hwaddr base, AtjINTCStatus *intc)
 {
     DeviceState *dev;
     dev = qdev_create(NULL, TYPE_ATJ213X_SDC);
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+
+    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_SD));
     return dev;
 }
 
@@ -2188,7 +2191,7 @@ mips_atjsim_init(MachineState *machine)
     RTC_create(0x10018000, cmu, intc);
 
     /* SDC */
-    SDC_create(0x100b0000);
+    SDC_create(0x100b0000, intc);
 
     /* YUV2RGB */
     YUV2RGB_create(0x100f0000);
