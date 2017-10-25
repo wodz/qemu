@@ -44,6 +44,7 @@
 #include "exec/log.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
+#include "hw/sd/sd.h"
 
 static struct _loaderparams {
     int ram_size;
@@ -297,8 +298,19 @@ struct AtjPMUState {
     SysBusDevice parent_obj;
     MemoryRegion regs_region;
     uint32_t regs[PMU_REG_NUM];
+
+    void (*lradc_set)(void *opaque, int value);
 };
 typedef struct AtjPMUState AtjPMUState;
+
+static void PMU_lradc_set(void *opaque, int value)
+{
+    AtjPMUState *s = opaque;
+    uint32_t tmp =  s->regs[PMU_LRADC];
+    tmp &= ~(0xf << 24);
+    tmp |= (value & 0x0f);
+    s->regs[PMU_LRADC] = tmp;
+}
 
 static uint64_t PMU_read(void *opaque, hwaddr  addr, unsigned size)
 {
@@ -360,6 +372,8 @@ static void PMU_init(Object *obj)
 
     memory_region_init_io(&s->regs_region, obj, &PMU_mmio_ops, s, TYPE_ATJ213X_PMU, PMU_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
+
+    s->lradc_set = PMU_lradc_set;
 }
 
 static void PMU_realize(DeviceState *dev, Error **errp)
@@ -923,7 +937,7 @@ struct AtjSDCState {
 };
 typedef struct AtjSDCState AtjSDCState;
 
-static void sd_command(AtjSDC *s)
+static void sd_command(AtjSDCState *s)
 {
     SDRequest req;
     uint8_t rsp[16];
@@ -948,7 +962,7 @@ static void sd_command(AtjSDC *s)
         qemu_log("%s() requested response != received\n", __func__);
     }
 
-    switch (len):
+    switch (len)
     {
         case 0:
             s->regs[SDC_RSPBUF0] = 0;
@@ -991,7 +1005,7 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
     switch (addr)
     {
         case SDC_DAT:
-            if (SDC_enabled(s) && s->regs[SDC_BYTECNT] > 0)
+            if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
                 uint32_t r = sd_read_data(s->card) << 24 |
                              sd_read_data(s->card) << 16 |
@@ -1019,9 +1033,11 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
     switch (addr)
     {
         case SDC_CTL:
+        {
             int datawid = value & 3;
-            qemu_log("%s() SD interface data width: %d\n", datawid ? ((datawid > 1) ? 8 : 4) : 1);
+            qemu_log("%s() SD interface data width: %d\n", __func__, datawid ? ((datawid > 1) ? 8 : 4) : 1);
             break;
+        }
 
         case SDC_CMDRSP:
             if (!SDC_enabled(s))
@@ -1040,7 +1056,7 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             break;
 
         case SDC_DAT:
-            if (SDC_enabled(s) && s->regs[SDC_BYTECNT] > 0)
+            if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
                 sd_write_data(s->card, (value >> 24) & 0xff);
                 sd_write_data(s->card, (value >> 16) & 0xff);
@@ -1088,7 +1104,7 @@ static void SDC_init(Object *obj)
     BlockBackend *blk = dinfo ? blk_by_legacy_dinfo(dinfo) : NULL;
     s->card = sd_init(blk, false);
 
-    qdev_init_gpio_out(DEVICE(obj), s->sdc_irq, 1);
+    qdev_init_gpio_out(DEVICE(obj), &s->sdc_irq, 1);
 }
 
 static void SDC_realize(DeviceState *dev, Error **errp)
@@ -1132,7 +1148,7 @@ static void SDC_register_types(void)
 type_init(SDC_register_types)
 
 
-static DeviceState *SDC_create(hwaddr base, AtjINTCStatus *intc)
+static DeviceState *SDC_create(hwaddr base, AtjINTCState *intc)
 {
     DeviceState *dev;
     dev = qdev_create(NULL, TYPE_ATJ213X_SDC);
@@ -1469,6 +1485,124 @@ static DeviceState *YUV2RGB_create(hwaddr base)
     return dev;
 }
 
+/* Input driver */
+typedef struct {
+    qemu_irq irq;
+    int keycode;
+    int type;
+    int adc_val;
+    uint8_t pressed;
+} atj_button;
+
+typedef struct {
+    void *pmu;
+    atj_button *buttons;
+    int num_buttons;
+    int extension;
+} atj_button_state;
+
+enum {
+    KEY_MONOSTABLE,
+    KEY_BISTABLE,
+    KEY_ADC
+};
+
+static void atj_put_key(void * opaque, int keycode)
+{
+    atj_button_state *s = (atj_button_state *)opaque;
+    AtjPMUState *pmu = s->pmu;
+    int down;
+
+
+    if (keycode == 0xe0 && !s->extension)
+    {
+        s->extension = 0x80;
+        return;
+    }
+
+    down = (keycode & 0x80) == 0;
+    keycode = (keycode & 0x7f) | s->extension;
+
+    for (int i = 0; i < s->num_buttons; i++)
+    {
+        switch (s->buttons[i].type)
+        {
+            case KEY_BISTABLE:
+            {
+                if (s->buttons[i].keycode == keycode && down)
+                {
+                    s->buttons[i].pressed = !s->buttons[i].pressed;
+                    qemu_set_irq(s->buttons[i].irq, s->buttons[i].pressed);
+                }
+                break;
+            }
+
+            case KEY_MONOSTABLE:
+            {
+                if (s->buttons[i].keycode == keycode &&
+                    s->buttons[i].pressed != down)
+                {
+                    s->buttons[i].pressed = down;
+                    qemu_set_irq(s->buttons[i].irq, down);
+                }
+            }
+
+            case KEY_ADC:
+            {
+                if (s->buttons[i].keycode == keycode &&
+                    s->buttons[i].pressed != down)
+                {
+                    s->buttons[i].pressed = down;
+                    pmu->lradc_set(s->pmu, down ? s->buttons[i].adc_val : 0x0f);
+                }
+                break;
+            }
+        }
+    }
+
+    s->extension = 0;
+}
+
+static const VMStateDescription vmstate_atj_button = {
+    .name = "atj_button",
+    .version_id = 0,
+    .minimum_version_id = 0,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT8(pressed, atj_button),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription vmstate_atj_buttons = {
+    .name = "atj_buttons",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_INT32(extension, atj_button_state),
+        VMSTATE_STRUCT_VARRAY_INT32(buttons, atj_button_state, num_buttons, 0,
+                              vmstate_atj_button, atj_button),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void atj_button_init(int n, qemu_irq *irq, const int *type, const int *keycode, void *pmu)
+{
+    atj_button_state *s;
+    int i;
+
+    s = g_new0(atj_button_state, 1);
+    s->buttons = g_new0(atj_button, n);
+    for (i = 0; i < n; i++) {
+        s->buttons[i].irq = irq[i];
+        s->buttons[i].keycode = keycode[i];
+        s->buttons[i].type = type[i];
+    }
+    s->num_buttons = n;
+    s->pmu = pmu;
+    qemu_add_kbd_event_handler(atj_put_key, s);
+    vmstate_register(NULL, -1, &vmstate_atj_buttons, s);
+}
+
 /* GPIO Block */
 #define TYPE_ATJ213X_GPIO "atj213x-GPIO"
 #define ATJ213X_GPIO(obj) \
@@ -1486,9 +1620,19 @@ enum {
     GPIO_REG_NUM
 };
 
+enum {
+    GPIOA,
+    GPIOB,
+    GPIO_PORT_NUM
+};
+
 struct AtjGPIOState {
     SysBusDevice parent_obj;
     MemoryRegion regs_region;
+
+    /* gpio_in are allocated with qdev_init_gpio_in */
+    qemu_irq gpio_out[GPIO_PORT_NUM * 32];
+
     uint32_t regs[GPIO_REG_NUM];
 };
 typedef struct AtjGPIOState AtjGPIOState;
@@ -1543,6 +1687,38 @@ static void GPIO_reset(DeviceState *d)
     }
 }
 
+static void GPIO_in_handler(void * opaque, int n_IRQ, int level)
+{
+    AtjGPIOState *s = opaque;
+
+    int port = n_IRQ / 32;
+    int bit = n_IRQ % 32;
+static int i = 0;
+qemu_log("%d: %s() port: %d bit: %d level: %d\n", i++, __func__, port, bit, level);
+    if (port == GPIOA)
+    {
+        if (level)
+        {
+            s->regs[GPIO_ADAT] |= (1 << bit);
+        }
+        else
+        {
+            s->regs[GPIO_ADAT] &= ~(1 << bit);
+        }
+    }
+    else
+    {
+        if (level)
+        {
+            s->regs[GPIO_BDAT] |= (1 << bit);
+        }
+        else
+        {
+            s->regs[GPIO_BDAT] &= ~(1 << bit);
+        }
+    }
+}
+
 static void GPIO_init(Object *obj)
 {
     AtjGPIOState *s = ATJ213X_GPIO(obj);
@@ -1554,6 +1730,21 @@ static void GPIO_init(Object *obj)
 
 static void GPIO_realize(DeviceState *dev, Error **errp)
 {
+    /* keycodes for 'h', 'p', PAGE_UP, PAGE_DOWN */
+    static const int keycodes[] = { 0x23, 0x19, 0xc9, 0xd1 };
+    static const int types[] = { KEY_BISTABLE, KEY_MONOSTABLE, KEY_MONOSTABLE, KEY_MONOSTABLE };
+    qemu_irq key_irqs[4];
+
+    AtjGPIOState *s = (AtjGPIOState *)dev;
+    qdev_init_gpio_in(dev, GPIO_in_handler, 2*32);
+    qdev_init_gpio_out(dev, s->gpio_out, 2*32);
+
+    key_irqs[0] = qdev_get_gpio_in(dev, 10); /* hold GPIOA10 */
+    key_irqs[1] = qdev_get_gpio_in(dev, 8); /* power GPIOA8 */
+    key_irqs[2] = qdev_get_gpio_in(dev, 12); /* vol+ GPIOA12 */
+    key_irqs[3] = qdev_get_gpio_in(dev, 32+31); /* vol- GPIOB31 */
+
+    atj_button_init(4, key_irqs, types, keycodes);
 }
 
 static const VMStateDescription vmstate_GPIO = {
