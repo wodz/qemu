@@ -1642,61 +1642,28 @@ struct AtjGPIOState {
 };
 typedef struct AtjGPIOState AtjGPIOState;
 
-static uint64_t GPIO_read(void *opaque, hwaddr  addr, unsigned size)
+static void GPIO_out_update(AtjGPIOState *s)
 {
-    AtjGPIOState *s = opaque;
-
-    addr >>= 2;
-    switch (addr)
+    for (int bit=0; bit < 32; bit++)
     {
-        case GPIO_ADAT:
-            qemu_log("%s() GPIO_ADAT: 0x%x\n", __func__, s->regs[addr]);
-            break;
-
-        default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
-            break;
+        if (s->regs[GPIO_AOUTEN] & (1 << bit))
+        {
+            qemu_set_irq(s->gpio_out[bit],
+                         s->regs[GPIO_ADAT] & (1 << bit) ? 1 : 0);
+        }
     }
 
-    return s->regs[addr];
-}
-
-static void GPIO_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
-{
-    AtjGPIOState *s = opaque;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
-
-    addr >>= 2;
-    switch (addr)
+    for (int bit=0; bit < 32; bit++)
     {
-        default:
-            break;
+        if (s->regs[GPIO_BOUTEN] & (1 << bit))
+        {
+            qemu_set_irq(s->gpio_out[32 + bit],
+                         s->regs[GPIO_ADAT] & (1 << bit) ? 1 : 0);
+        }
     }
-
-    s->regs[addr] = value;
-};
-
-static const MemoryRegionOps GPIO_mmio_ops = {
-    .read = GPIO_read,
-    .write = GPIO_write,
-    .valid = {
-        .min_access_size = 4,
-        .max_access_size = 4,
-    },
-    .endianness = DEVICE_NATIVE_ENDIAN,
-};
-
-static void GPIO_reset(DeviceState *d)
-{
-//    AtjGPIOState *s = ATJ213X_GPIO(d);
-
-//    for (int i=0; i<GPIO_REG_NUM; i++)
-//    {
-//        s->regs[i] = 0;
-//    }
 }
 
-static void GPIO_in_handler(void * opaque, int n_IRQ, int level)
+static void GPIO_in_update(void * opaque, int n_IRQ, int level)
 {
     AtjGPIOState *s = opaque;
 
@@ -1736,6 +1703,68 @@ qemu_log("%d: %s() port: %d bit: %d level: %d\n", i++, __func__, port, bit, leve
     }
 }
 
+static uint64_t GPIO_read(void *opaque, hwaddr  addr, unsigned size)
+{
+    AtjGPIOState *s = opaque;
+
+    addr >>= 2;
+    switch (addr)
+    {
+        case GPIO_ADAT:
+            qemu_log("%s() GPIO_ADAT: 0x%x\n", __func__, s->regs[addr]);
+            break;
+
+        default:
+            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
+            break;
+    }
+
+    return s->regs[addr];
+}
+
+static void GPIO_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
+{
+    AtjGPIOState *s = opaque;
+    s->regs[addr] = value;
+    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+
+    addr >>= 2;
+    switch (addr)
+    {
+        case GPIO_AOUTEN:
+        case GPIO_ADAT:
+        case GPIO_BOUTEN:
+        case GPIO_BDAT:
+            GPIO_out_update(s);
+            break;
+
+        default:
+            break;
+    }
+
+};
+
+static const MemoryRegionOps GPIO_mmio_ops = {
+    .read = GPIO_read,
+    .write = GPIO_write,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static void GPIO_reset(DeviceState *d)
+{
+//    AtjGPIOState *s = ATJ213X_GPIO(d);
+
+//    for (int i=0; i<GPIO_REG_NUM; i++)
+//    {
+//        s->regs[i] = 0;
+//    }
+}
+
+
 static void GPIO_init(Object *obj)
 {
     AtjGPIOState *s = ATJ213X_GPIO(obj);
@@ -1749,9 +1778,8 @@ static void GPIO_realize(DeviceState *dev, Error **errp)
 {
 
     AtjGPIOState *s = (AtjGPIOState *)dev;
-    qdev_init_gpio_in(dev, GPIO_in_handler, 2*32);
+    qdev_init_gpio_in(dev, GPIO_in_update, 2*32);
     qdev_init_gpio_out(dev, s->gpio_out, 2*32);
-
 }
 
 static const VMStateDescription vmstate_GPIO = {
@@ -2401,7 +2429,7 @@ mips_atjsim_init(MachineState *machine)
     DMAC_create(0x10060000, intc);
 
 
-    atj_button button_desc[10];
+    atj_button button_desc[11];
 
     /* HOLD defaults to 'not engaged' */
     button_desc[0].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 10)); /* GPIOA10 */
