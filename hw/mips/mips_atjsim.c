@@ -1530,19 +1530,9 @@ qemu_log("%s() keycode: 0x%x\n", __func__, keycode);
     {
         switch (s->buttons[i].type)
         {
-            case KEY_BISTABLE:
-            {
-                if (s->buttons[i].keycode == keycode && down)
-                {
-                    s->buttons[i].pressed = !s->buttons[i].pressed;
-                    qemu_set_irq(s->buttons[i].irq, s->buttons[i].pressed);
-                }
-                break;
-            }
-
             case KEY_MONOSTABLE:
             {
-                if (s->buttons[i].keycode == keycode &&
+                if ((s->buttons[i].keycode == keycode) &&
                     s->buttons[i].pressed != down)
                 {
                     s->buttons[i].pressed = down;
@@ -1550,9 +1540,19 @@ qemu_log("%s() keycode: 0x%x\n", __func__, keycode);
                 }
             }
 
+            case KEY_BISTABLE:
+            {
+                if ((s->buttons[i].keycode == keycode) && down)
+                {
+                    s->buttons[i].pressed = !s->buttons[i].pressed;
+                    qemu_set_irq(s->buttons[i].irq, s->buttons[i].pressed);
+                }
+                break;
+            }
+
             case KEY_ADC:
             {
-                if (s->buttons[i].keycode == keycode &&
+                if ((s->buttons[i].keycode) == keycode &&
                     s->buttons[i].pressed != down)
                 {
                     s->buttons[i].pressed = down;
@@ -1706,24 +1706,32 @@ static int i = 0;
 qemu_log("%d: %s() port: %d bit: %d level: %d\n", i++, __func__, port, bit, level);
     if (port == GPIOA)
     {
-        if (level)
+        /* act only on lines configured as inputs */
+        if (s->regs[GPIO_AINEN] & (1 << bit))
         {
-            s->regs[GPIO_ADAT] |= (1 << bit);
-        }
-        else
-        {
-            s->regs[GPIO_ADAT] &= ~(1 << bit);
+            if (level)
+            {
+                s->regs[GPIO_ADAT] |= (1 << bit);
+            }
+            else
+            {
+                s->regs[GPIO_ADAT] &= ~(1 << bit);
+            }
         }
     }
     else
     {
-        if (level)
+        /* act only on lines configured as inputs */
+        if (s->regs[GPIO_BINEN] & (1 << bit))
         {
-            s->regs[GPIO_BDAT] |= (1 << bit);
-        }
-        else
-        {
-            s->regs[GPIO_BDAT] &= ~(1 << bit);
+            if (level)
+            {
+                s->regs[GPIO_BDAT] |= (1 << bit);
+            }
+            else
+            {
+                s->regs[GPIO_BDAT] &= ~(1 << bit);
+            }
         }
     }
 }
