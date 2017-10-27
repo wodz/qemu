@@ -956,12 +956,21 @@ static void sd_command(AtjSDCState *s)
      * r3          |  4 | bit3 | no CRC7
      * r2          | 16 | bit4 | CRC7
      */
-    if ( ((s->regs[SDC_CMDRSP] & (1<<2)) && (len != 0)) ||
-         ((s->regs[SDC_CMDRSP] & (1<<1)) && (len != 4)) ||
-         ((s->regs[SDC_CMDRSP] & (1<<3)) && (len != 4)) ||
-         ((s->regs[SDC_CMDRSP] & (1<<4)) && (len != 16)) )
+    if ((s->regs[SDC_CMDRSP] & (1<<2)) && (len != 0))
     {
-        qemu_log("%s() requested response != received\n", __func__);
+        qemu_log("%s() requested NRSP but rsp len = %d\n", __func__, len);
+    }
+    else if((s->regs[SDC_CMDRSP] & (1<<1)) && (len != 4))
+    {
+        qemu_log("%s() requested RSP1 but rsp len = %d\n", __func__, len);
+    }
+    else if((s->regs[SDC_CMDRSP] & (1<<3)) && (len != 4))
+    {
+        qemu_log("%s() requested RSP3 but rsp len = %d\n", __func__, len);
+    }
+    else if((s->regs[SDC_CMDRSP] & (1<<4)) && (len != 16))
+    {
+        qemu_log("%s() requested RSP2 but rsp len = %d\n", __func__, len);
     }
 
     switch (len)
@@ -978,6 +987,9 @@ static void sd_command(AtjSDCState *s)
             s->regs[SDC_RSPBUF1] = 0;
             s->regs[SDC_RSPBUF2] = 0;
             s->regs[SDC_RSPBUF3] = 0;
+
+            /* no crc error right? */
+            s->regs[SDC_CRC7] = rsp[3];
             break;
 
         case 16:
@@ -1029,9 +1041,10 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjSDCState *s = opaque;
     qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
-    s->regs[addr] = value;
 
     addr >>= 2;
+    s->regs[addr] = value;
+
     switch (addr)
     {
         case SDC_CTL:
@@ -1040,6 +1053,9 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             qemu_log("%s() SD interface data width: %d\n", __func__, datawid ? ((datawid > 1) ? 8 : 4) : 1);
             break;
         }
+
+        case SDC_CMD:
+            break;
 
         case SDC_CMDRSP:
             if (!SDC_enabled(s))
@@ -1066,6 +1082,10 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
                 sd_write_data(s->card, value & 0xff);
                 s->regs[SDC_BYTECNT] -= size;
             }
+            break;
+
+        case SDC_CLK:
+            s->regs[addr] = 0;
             break;
 
         default:
