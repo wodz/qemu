@@ -983,20 +983,28 @@ static void sd_command(AtjSDCState *s)
             break;
 
         case 4:
-            s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
-            s->regs[SDC_RSPBUF1] = 0;
+            /* bits 0-7 in RSPBUF0 is crc7 */
+            s->regs[SDC_RSPBUF0] = (rsp[1]<<24)|(rsp[2]<<16)|(rsp[3]<<8);
+            s->regs[SDC_RSPBUF1] = rsp[0];
             s->regs[SDC_RSPBUF2] = 0;
             s->regs[SDC_RSPBUF3] = 0;
 
             /* no crc error right? */
-            s->regs[SDC_CRC7] = rsp[3];
+            s->regs[SDC_CRC7] = s->regs[SDC_RSPBUF0] & 0xff;
             break;
 
         case 16:
+
+            s->regs[SDC_RSPBUF3] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
+            s->regs[SDC_RSPBUF2] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
+            s->regs[SDC_RSPBUF1] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
+            s->regs[SDC_RSPBUF0] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
+#if 0
             s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
             s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
             s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
             s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
+#endif
             break;
 
         default:
@@ -1030,11 +1038,10 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
             return 0xffffffff;
 
         default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
-            break;
+            qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%08x\n", __func__, addr<<2, s->regs[addr]);
+            return s->regs[addr];
     }
 
-    return s->regs[addr];
 }
 
 static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
@@ -1228,7 +1235,7 @@ typedef struct AtjYUV2RGBState AtjYUV2RGBState;
 static uint64_t YUV2RGB_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjYUV2RGBState *s = opaque;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr);
+//    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr);
 
     addr >>= 2;
     switch (addr)
@@ -1273,7 +1280,7 @@ static void vram_write_windowed(void *opaque, uint32_t value)
 static void YUV2RGB_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjYUV2RGBState *s = opaque;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+//    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
     addr >>= 2;
     switch (addr)
     {
@@ -2009,37 +2016,37 @@ static void DMAC_ch0_cb(void *opaque)
 
 static void DMAC_ch1_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 1);
 }
 
 static void DMAC_ch2_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 2);
 }
 
 static void DMAC_ch3_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 3);
 }
 
 static void DMAC_ch4_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 4);
 }
 
 static void DMAC_ch5_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 5);
 }
 
 static void DMAC_ch6_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 6);
 }
 
 static void DMAC_ch7_cb(void *opaque)
 {
-    DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 7);
 }
 
 static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
@@ -2229,6 +2236,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             {
                 DMAC_ch_run(s, ch_no);
             }
+            break;
 
         default:
             qemu_log("%s() Restricted area access\n", __func__);
