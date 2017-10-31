@@ -999,12 +999,6 @@ static void sd_command(AtjSDCState *s)
             s->regs[SDC_RSPBUF2] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
             s->regs[SDC_RSPBUF1] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
             s->regs[SDC_RSPBUF0] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
-#if 0
-            s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
-            s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
-            s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
-            s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
-#endif
             break;
 
         default:
@@ -1029,10 +1023,10 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
         case SDC_DAT:
             if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
-                uint32_t r = sd_read_data(s->card) << 24 |
-                             sd_read_data(s->card) << 16 |
-                             sd_read_data(s->card) << 8  |
-                             sd_read_data(s->card);
+                uint32_t r = sd_read_data(s->card) << 0   |
+                             sd_read_data(s->card) << 8   |
+                             sd_read_data(s->card) << 16  |
+                             sd_read_data(s->card) << 24;
 
 qemu_log("%s() SDC_DAT: 0x%08x\n", __func__, r);
 
