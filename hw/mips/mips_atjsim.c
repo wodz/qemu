@@ -1033,6 +1033,10 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
                              sd_read_data(s->card) << 16 |
                              sd_read_data(s->card) << 8  |
                              sd_read_data(s->card);
+
+qemu_log("%s() SDC_DAT: 0x%08x\n", __func__, r);
+
+                s->regs[SDC_BYTECNT] -= size;
                 return r;
             }
             return 0xffffffff;
@@ -1942,20 +1946,34 @@ static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
 
     while (chan->rem)
     {
-        /* DMA will transfer in 8bit mode when remain counter is less
-         * than Tran_Wide.
-         */
-        stranwid = (chan->rem < stranwid) ? 1 : stranwid;
-        dtranwid = (chan->rem < dtranwid) ? 1 : dtranwid;
+
+        /* source fixed size mode */
+        if (!(chan->mode & (1<<0)))
+        {
+            /* DMA will transfer in 8bit mode when remain counter is less
+             * than Tran_Wide.
+             */
+            stranwid = (chan->rem < stranwid) ? 1 : stranwid;
+        }
+
+        /* destination fixed size mode */
+        if (!(chan->mode & (1<<16)))
+        {
+            /* DMA will transfer in 8bit mode when remain counter is less
+             * than Tran_Wide.
+             */
+            dtranwid = (chan->rem < dtranwid) ? 1 : dtranwid;
+        }
 
         int xsize = (dtranwid < stranwid) ? stranwid : dtranwid;
         for (int n = 0; n < xsize; n += stranwid)
         {
             cpu_physical_memory_read(src, buf + n, stranwid);
 
-            if (!(chan->mode & 1))
+            /* source fixed address */
+            if (!(chan->mode & (1<<8)))
             {
-                /* NOT source fixed mode */
+                /* source address change direction */
                 if (chan->mode & (1 << 9))
                 {
                     /* SDIR = 1 - decrease */
@@ -1973,14 +1991,18 @@ static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
         {
             cpu_physical_memory_write(dst, buf + n, dtranwid);
 
-            if (!(chan->mode & (1 << 16)))
+            /* destination fixed address */
+            if (!(chan->mode & (1 << 24)))
             {
+                /* destination address change direction */
                 if (chan->mode & (1 << 25))
                 {
+                    /* DDIR = 1 - decrease */
                     dst -= dtranwid;
                 }
                 else
                 {
+                    /* DDIR = 0 - increase */
                     dst += dtranwid;
                 }
             }
