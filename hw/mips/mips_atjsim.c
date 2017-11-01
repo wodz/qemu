@@ -1029,10 +1029,10 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
         case SDC_DAT:
             if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
-                uint32_t r = sd_read_data(s->card) << 24 |
-                             sd_read_data(s->card) << 16 |
+                uint32_t r = sd_read_data(s->card) << 0  |
                              sd_read_data(s->card) << 8  |
-                             sd_read_data(s->card);
+                             sd_read_data(s->card) << 16 |
+                             sd_read_data(s->card) << 24;
 
 qemu_log("%s() SDC_DAT: 0x%08x\n", __func__, r);
 
@@ -1087,10 +1087,10 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case SDC_DAT:
             if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
-                sd_write_data(s->card, (value >> 24) & 0xff);
+                sd_write_data(s->card, (value >> 0)  & 0xff);
+                sd_write_data(s->card, (value >> 8)  & 0xff);
                 sd_write_data(s->card, (value >> 16) & 0xff);
-                sd_write_data(s->card, (value >> 8) & 0xff);
-                sd_write_data(s->card, value & 0xff);
+                sd_write_data(s->card, (value >> 24) & 0xff);
                 s->regs[SDC_BYTECNT] -= size;
             }
             break;
