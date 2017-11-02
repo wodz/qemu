@@ -33,6 +33,7 @@
 #include "hw/mips/cpudevs.h"
 #include "hw/ptimer.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/watchdog.h"
 #include "hw/boards.h"
 #include "hw/mips/bios.h"
 #include "hw/loader.h"
@@ -692,6 +693,8 @@ struct AtjRTCState {
     qemu_irq     tmr_irq[2];
     QEMUBH       *bh[2];
     ptimer_state *ptimer[2];
+    QEMUTimer    *wdt_timer;
+    qemu_irq     wdt_irq;
     uint32_t     freq_hz;
     uint32_t     regs[RTC_REG_NUM];
 };
@@ -750,6 +753,24 @@ static void T1_zero_cb(void *opaque)
     tmr_update_irq(opaque);
 }
 
+static void WDT_expire_cb(void *opaque)
+{
+    AtjRTCState *s = opaque;
+    watchdog_perform_action();
+    timer_del(s->wdt_timer);
+}
+
+static void WDT_reload(void *opaque)
+{
+    AtjRTCState *s = opaque;
+    const int wdt_reload[] = {176, 352, 1400, 5600, 22200, 45000, 90000, 180000};
+
+    int idx = (s->regs[RTC_WDCTL] >> 1) & 7;
+    int reload = wdt_reload[idx];
+
+    timer_mod(s->wdt_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + reload);
+}
+
 static uint64_t RTC_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjRTCState *s = opaque;
@@ -786,6 +807,32 @@ static void RTC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
     addr >>= 2;
     switch (addr)
     {
+        case RTC_WDCTL:
+            /* WDT is enabled */
+            if (s->regs[addr] & (1<<4))
+            {
+                /* WDT feed */
+                if (value & 1)
+                {
+                    WDT_reload(opaque);
+                }
+
+                if (!(value & (1<<4)))
+                {
+                   timer_del(s->wdt_timer);
+                }
+            }
+            else
+            {
+                if (value & (1<<4))
+                {
+                    WDT_reload(opaque);
+                }
+            }
+
+            value &= ~1;
+            break;
+
         case RTC_T0CTL:
         case RTC_T1CTL:
             if (value & 1)
@@ -812,6 +859,7 @@ static void RTC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case RTC_T1:
             ptimer_set_limit(s->ptimer[1], value, 1); // initial countdown value
             break;
+
 
         default:
             break;
@@ -843,6 +891,8 @@ static void RTC_reset(DeviceState *d)
     ptimer_stop(s->ptimer[1]);
     ptimer_set_limit(s->ptimer[0], 0xffffff, 1);
     ptimer_set_limit(s->ptimer[1], 0xffffff, 1);
+
+    timer_del(s->wdt_timer);
 }
 
 static void RTC_init(Object *obj)
@@ -854,6 +904,7 @@ static void RTC_init(Object *obj)
     sysbus_init_mmio(dev, &s->regs_region);
 
     qdev_init_gpio_out(DEVICE(obj), s->tmr_irq, 2);
+    qdev_init_gpio_out(DEVICE(obj), &s->wdt_irq, 1);
 }
 
 static void RTC_realize(DeviceState *dev, Error **errp)
@@ -865,6 +916,8 @@ static void RTC_realize(DeviceState *dev, Error **errp)
     s->ptimer[0] = ptimer_init(s->bh[0], PTIMER_POLICY_DEFAULT);
     s->ptimer[1] = ptimer_init(s->bh[1], PTIMER_POLICY_DEFAULT);
 
+    s->wdt_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, WDT_expire_cb, dev);
+    select_watchdog_action("reset");
 }
 
 static const VMStateDescription RTC_vmstate = {
@@ -913,6 +966,7 @@ static DeviceState *RTC_create(hwaddr base, AtjCMUState *cmu, AtjINTCState *intc
 
     qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_T0));
     qdev_connect_gpio_out(dev, 1, qdev_get_gpio_in(DEVICE(intc), IRQ_T1));
+    qdev_connect_gpio_out(dev, 2, qdev_get_gpio_in(DEVICE(intc), IRQ_WD));
 
     return dev;
 }
