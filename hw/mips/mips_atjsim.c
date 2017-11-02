@@ -36,6 +36,7 @@
 #include "hw/boards.h"
 #include "hw/mips/bios.h"
 #include "hw/loader.h"
+#include "hw/misc/unimp.h"
 #include "elf.h"
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
@@ -365,7 +366,7 @@ static void PMU_reset(DeviceState *d)
         s->regs[i] = 0;
     }
 
-    s->regs[PMU_LRADC] = 0xf<<24;
+    s->regs[PMU_LRADC] = (0xf<<24) | (0x3f<<16);
 }
 
 static void PMU_init(Object *obj)
@@ -2504,6 +2505,10 @@ mips_atjsim_init(MachineState *machine)
     /* DMAC */
     DMAC_create(0x10060000, intc);
 
+    create_unimplemented_device("DAC", 0x10100000, 0x14);
+    create_unimplemented_device("UDC", 0x100e0000, 0x1000);
+    create_unimplemented_device("I2C", 0x10180000, 0x100);
+    create_unimplemented_device("SDRAMC", 0x10070000, 0x1c);
 
     atj_button button_desc[11];
 
