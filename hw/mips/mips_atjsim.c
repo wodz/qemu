@@ -45,6 +45,7 @@
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "hw/sd/sd.h"
+#include "trace.h"
 
 static struct _loaderparams {
     int ram_size;
@@ -181,23 +182,23 @@ static uint64_t CMU_read(void *opaque, hwaddr  addr, unsigned size)
     switch (addr)
     {
         default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
             break;
     }
 
+    trace_atj_cmu_read(addr<<2, s->regs[addr]);
     return s->regs[addr];
 }
 
 static void CMU_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjCMUState *s = opaque;
+    trace_atj_cmu_write(addr, value);
 
     addr >>= 2;
     switch (addr)
     {
         default:
             s->regs[addr] = value;
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr<<2, value);
             break;
     }
 };
@@ -309,35 +310,35 @@ static void PMU_lradc_set(void *opaque, int value)
     uint32_t tmp =  s->regs[PMU_LRADC];
     tmp &= ~(0xf << 24);
     tmp |= (value & 0x0f) << 24;
+
     s->regs[PMU_LRADC] = tmp;
 }
 
 static uint64_t PMU_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjPMUState *s = opaque;
-
     addr >>= 2;
     switch (addr)
     {
         default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
             break;
     }
 
+    trace_atj_pmu_read(addr<<2, s->regs[addr]);
     return s->regs[addr];
 }
 uint8_t backlight_val = 0x1f;
 static void PMU_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjPMUState *s = opaque;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_pmu_write(addr, value);
 
     addr >>= 2;
     switch (addr)
     {
         case PMU_CHG:
             backlight_val = (value >> 8) & 0x1f;
-            qemu_log("Backlight: %ld\n", (value >> 8) & 0x1f);
+            trace_atj_backlight(backlight_val);
         default:
             break;
     }
@@ -491,6 +492,8 @@ typedef struct AtjINTCState AtjINTCState;
 
 static void INTC_update_irq(AtjINTCState *s)
 {
+    int irq_lines[INTC_OUT_IRQS_NUM] = {0, 0, 0, 0, 0};
+
     uint32_t mask = 1;
     for (int i=0; i<INTC_IRQS_NUM; mask <<= 1, i++)
     {
@@ -503,9 +506,16 @@ static void INTC_update_irq(AtjINTCState *s)
 
             irq_out_no = (irq_out_no > 4) ? 4 : irq_out_no;
 
-            /* update mips irq line */
-            qemu_set_irq(s->irq_out[irq_out_no], level);
+            irq_lines[irq_out_no] |= level;
+
         }
+    }
+
+    for (int i=0; i<INTC_OUT_IRQS_NUM; i++)
+    {
+        /* update mips irq lines */
+        trace_atj_intc_out(i, irq_lines[i]);
+        qemu_set_irq(s->irq_out[i], irq_lines[i]);
     }
 }
 
@@ -524,9 +534,10 @@ static void INTC_set_irq(void *opaque, int n_IRQ, int level)
         s->regs[INTC_PD] &= ~mask;
     }
 
-    /* if unmasked update irq state */
+    /* if unmasked, update irq state */
     if (s->regs[INTC_MSK] & mask)
     {
+        trace_atj_intc_in(mask, level);
         INTC_update_irq(s);
     }
 }
@@ -540,7 +551,7 @@ static uint64_t INTC_read(void *opaque, hwaddr addr,
     switch (addr)
     {
         default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr << 2);
+            trace_atj_intc_read(addr<<2, s->regs[addr]);
             return s->regs[addr];
     }
 }
@@ -549,6 +560,7 @@ static void INTC_write(void *opaque, hwaddr addr, uint64_t value,
                        unsigned size)
 {
     AtjINTCState *s = opaque;
+    trace_atj_intc_write(addr, value);
 
     addr >>= 2;
     switch (addr)
@@ -557,13 +569,11 @@ static void INTC_write(void *opaque, hwaddr addr, uint64_t value,
             /* read only */
             qemu_log("%s() READONLY addr: 0x" TARGET_FMT_plx " value: 0x"
                      TARGET_FMT_plx "\n", __func__, addr << 2, value);
-//            return;
+            return;
 
         default:
             s->regs[addr] = value;
             INTC_update_irq(s);
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x" TARGET_FMT_plx
-                     "\n", __func__, addr << 2, value);
     }
 }
 
@@ -755,7 +765,7 @@ static uint64_t RTC_read(void *opaque, hwaddr  addr, unsigned size)
             break;
     }
 
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
+    trace_atj_rtc_read(addr<<2, s->regs[addr]);
     return s->regs[addr];
 }
 
@@ -770,7 +780,7 @@ static void RTC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjRTCState *s = opaque;
 
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_rtc_write(addr, value);
 
     addr >>= 2;
     switch (addr)
@@ -780,8 +790,8 @@ static void RTC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             if (value & 1)
             {
                /* writing ZIPD bit clears irq pending flag */
-               s->regs[addr] &= ~1;
                value &= ~1;
+               s->regs[addr] &= ~1;
             }
 
             /* timer enable bit */
@@ -857,7 +867,7 @@ static void RTC_realize(DeviceState *dev, Error **errp)
 }
 
 static const VMStateDescription RTC_vmstate = {
-    .name = TYPE_ATJ213X_INTC,
+    .name = TYPE_ATJ213X_RTC,
     .version_id = 1,
     .minimum_version_id = 1,
     .fields = (VMStateField[]) {
@@ -994,17 +1004,10 @@ static void sd_command(AtjSDCState *s)
             break;
 
         case 16:
-
             s->regs[SDC_RSPBUF3] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
             s->regs[SDC_RSPBUF2] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
             s->regs[SDC_RSPBUF1] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
             s->regs[SDC_RSPBUF0] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
-#if 0
-            s->regs[SDC_RSPBUF0] = (rsp[0]<<24)|(rsp[1]<<16)|(rsp[2]<<8)|rsp[3];
-            s->regs[SDC_RSPBUF1] = (rsp[4]<<24)|(rsp[5]<<16)|(rsp[6]<<8)|rsp[7];
-            s->regs[SDC_RSPBUF2] = (rsp[8]<<24)|(rsp[9]<<16)|(rsp[10]<<8)|rsp[11];
-            s->regs[SDC_RSPBUF3] = (rsp[12]<<24)|(rsp[13]<<16)|(rsp[14]<<8)|rsp[15];
-#endif
             break;
 
         default:
@@ -1022,6 +1025,7 @@ static bool SDC_enabled(AtjSDCState *s)
 static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjSDCState *s = opaque;
+    uint32_t dat;
 
     addr >>= 2;
     switch (addr)
@@ -1029,20 +1033,22 @@ static uint64_t SDC_read(void *opaque, hwaddr  addr, unsigned size)
         case SDC_DAT:
             if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
-                uint32_t r = sd_read_data(s->card) << 0  |
-                             sd_read_data(s->card) << 8  |
-                             sd_read_data(s->card) << 16 |
-                             sd_read_data(s->card) << 24;
-
-qemu_log("%s() SDC_DAT: 0x%08x\n", __func__, r);
+                dat = sd_read_data(s->card) << 0  |
+                      sd_read_data(s->card) << 8  |
+                      sd_read_data(s->card) << 16 |
+                      sd_read_data(s->card) << 24;
 
                 s->regs[SDC_BYTECNT] -= size;
-                return r;
             }
-            return 0xffffffff;
+            else
+            {
+                dat = 0xffffffff;
+            }
+            trace_atj_sdc_dat_read(dat);
+            return dat;
 
         default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%08x\n", __func__, addr<<2, s->regs[addr]);
+            trace_atj_sdc_read(addr<<2, s->regs[addr]);
             return s->regs[addr];
     }
 
@@ -1051,7 +1057,7 @@ qemu_log("%s() SDC_DAT: 0x%08x\n", __func__, r);
 static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjSDCState *s = opaque;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_sdc_write(addr, value);
 
     addr >>= 2;
     s->regs[addr] = value;
@@ -1078,7 +1084,8 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             {
                 s->regs[addr] &= ~1;
             }
-            else if (value & (0xf << 1))
+
+            if (value & (0xf << 1))
             {
                 sd_command(s);
             }
@@ -1087,6 +1094,8 @@ static void SDC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case SDC_DAT:
             if (SDC_enabled(s) && s->regs[SDC_BYTECNT])
             {
+                trace_atj_sdc_dat_write(value);
+
                 sd_write_data(s->card, (value >> 0)  & 0xff);
                 sd_write_data(s->card, (value >> 8)  & 0xff);
                 sd_write_data(s->card, (value >> 16) & 0xff);
@@ -1239,19 +1248,21 @@ typedef struct AtjYUV2RGBState AtjYUV2RGBState;
 static uint64_t YUV2RGB_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjYUV2RGBState *s = opaque;
-//    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr);
 
     addr >>= 2;
     switch (addr)
     {
         case YUV2RGB_CTL:
             /* pretend fifo is always empty */
+            trace_atj_yuv2rgb_read(addr<<2, s->regs[addr] | 0x04);
+
             return s->regs[addr] | 0x04;
 
         default:
             break;
     }
 
+    trace_atj_yuv2rgb_read(addr<<2, s->regs[addr]);
     return s->regs[addr];
 }
 
@@ -1284,7 +1295,8 @@ static void vram_write_windowed(void *opaque, uint32_t value)
 static void YUV2RGB_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjYUV2RGBState *s = opaque;
-//    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_yuv2rgb_write(addr, value);
+
     addr >>= 2;
     switch (addr)
     {
@@ -1546,7 +1558,7 @@ static void atj_put_key(void * opaque, int keycode)
     AtjPMUState *pmu = s->pmu;
     int down;
 
-qemu_log("%s() keycode: 0x%x\n", __func__, keycode);
+    trace_atj_put_key(keycode);
 
     if (keycode == 0xe0 && !s->extension)
     {
@@ -1701,8 +1713,9 @@ static void GPIO_in_update(void * opaque, int n_IRQ, int level)
 
     int port = n_IRQ / 32;
     int bit = n_IRQ % 32;
-static int i = 0;
-qemu_log("%d: %s() port: %d bit: %d level: %d\n", i++, __func__, port, bit, level);
+
+    trace_atj_gpio_in_update(port, bit, level);
+
     if (port == GPIOA)
     {
         /* act only on lines configured as inputs */
@@ -1743,7 +1756,7 @@ static uint64_t GPIO_read(void *opaque, hwaddr  addr, unsigned size)
     switch (addr)
     {
         case GPIO_ADAT:
-            qemu_log("%s() GPIO_ADAT: 0x%x\n", __func__, s->regs[addr]);
+            trace_atj_gpio_read(addr<<2, s->regs[addr]);
             break;
 
         default:
@@ -1758,7 +1771,7 @@ static void GPIO_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjGPIOState *s = opaque;
     s->regs[addr] = value;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_gpio_write(addr, value);
 
     addr >>= 2;
     switch (addr)
@@ -2076,19 +2089,22 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjDMACState *s = opaque;
     int ch_no;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr);
+    uint32_t r = 0;
 
     addr >>= 2;
     switch (addr)
     {
         case DMA_CTL:
-            return s->ctl;
+            r = s->ctl;
+            break;
 
         case DMA_IRQEN:
-            return s->irqen;
+            r = s->irqen;
+            break;
 
         case DMA_IRQPD:
-            return s->irqpd;
+            r = s->irqpd;
+            break;
 
         case DMA0_MODE:
         case DMA1_MODE:
@@ -2099,7 +2115,8 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_MODE:
         case DMA7_MODE:
             ch_no = (addr - DMA0_MODE)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].mode;
+            r = s->ch[ch_no].mode;
+            break;
 
         case DMA0_SRC:
         case DMA1_SRC:
@@ -2110,7 +2127,8 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_SRC:
         case DMA7_SRC:
             ch_no = (addr - DMA0_SRC)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].src;
+            r = s->ch[ch_no].src;
+            break;
 
         case DMA0_DST:
         case DMA1_DST:
@@ -2121,7 +2139,8 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_DST:
         case DMA7_DST:
             ch_no = (addr - DMA0_DST)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].dst;
+            r = s->ch[ch_no].dst;
+            break;
 
         case DMA0_CNT:
         case DMA1_CNT:
@@ -2132,7 +2151,8 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_CNT:
         case DMA7_CNT:
             ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].cnt;
+            r = s->ch[ch_no].cnt;
+            break;
 
         case DMA0_REM:
         case DMA1_REM:
@@ -2143,7 +2163,8 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_REM:
         case DMA7_REM:
             ch_no = (addr - DMA0_REM)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].rem;
+            r = s->ch[ch_no].rem;
+            break;
 
         case DMA0_CMD:
         case DMA1_CMD:
@@ -2154,19 +2175,23 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA6_CMD:
         case DMA7_CMD:
             ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
-            return s->ch[ch_no].cmd;
+            r = s->ch[ch_no].cmd;
+            break;
 
         default:
             qemu_log("%s() Restricted area access\n", __func__);
-            return 0;
+            break;
     }
+
+    trace_atj_dmac_read(addr<<2, r);
+    return r;
 }
 
 static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     AtjDMACState *s = opaque;
     int ch_no;
-    qemu_log("%s() addr: 0x" TARGET_FMT_plx " value: 0x%lx\n", __func__, addr, value);
+    trace_atj_dmac_write(addr, value);
 
     addr >>= 2;
     switch (addr)
