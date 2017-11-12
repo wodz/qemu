@@ -41,3 +41,7 @@ atj_gpio_in_update(int port, int bit, int level) "gpio port = 0x%0x bit = 0x%0x 
 # DMAC block
 atj_dmac_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_dmac_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
+
+# DAC block
+atj_dac_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
+atj_dac_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"

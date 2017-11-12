@@ -48,6 +48,7 @@
 #include "ui/pixel_ops.h"
 #include "hw/sd/sd.h"
 #include "trace.h"
+#include "audio/audio.h"
 
 static struct _loaderparams {
     int ram_size;
@@ -2456,6 +2457,188 @@ static DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
     return dev;
 }
 
+/* DAC Block */
+#define TYPE_ATJ213X_DAC "atj213x-DAC"
+#define ATJ213X_DAC(obj) \
+    OBJECT_CHECK(AtjDACState, (obj), TYPE_ATJ213X_DAC)
+
+enum {
+    DAC_CTL,
+    DAC_FIFOCTL,
+    DAC_DAT,
+    DAC_DEBUG,
+    DAC_ANALOG,
+    DAC_REG_NUM
+};
+
+#define ATJ_DAC_BUFFER_SIZE (512 * 2)
+struct AtjDACState {
+    SysBusDevice parent_obj;
+    MemoryRegion regs_region;
+    uint32_t regs[DAC_REG_NUM];
+
+    QEMUSoundCard card;
+    SWVoiceOut *voice;
+    uint32_t buffer[ATJ_DAC_BUFFER_SIZE];
+    uint32_t buffer_level;
+};
+typedef struct AtjDACState AtjDACState;
+
+static uint64_t DAC_read(void *opaque, hwaddr  addr, unsigned size)
+{
+    AtjDACState *s = opaque;
+
+    addr >>= 2;
+    switch (addr)
+    {
+        default:
+            break;
+    }
+
+    trace_atj_dac_read(addr<<2, s->regs[addr]);
+    return s->regs[addr];
+}
+
+static void DAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
+{
+    AtjDACState *s = opaque;
+    trace_atj_dac_write(addr, value);
+
+    addr >>= 2;
+    switch (addr)
+    {
+        case DAC_DAT:
+            if (s->buffer_level < ATJ_DAC_BUFFER_SIZE)
+            {
+                s->buffer[s->buffer_level++] = value;
+            }
+            break;
+
+        default:
+            s->regs[addr] = value;
+            break;
+    }
+};
+
+static const MemoryRegionOps DAC_mmio_ops = {
+    .read = DAC_read,
+    .write = DAC_write,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static void DAC_reset(DeviceState *d)
+{
+    AtjDACState *s = ATJ213X_DAC(d);
+
+    for (int i=0; i<DAC_REG_NUM; i++)
+    {
+        s->regs[i] = 0;
+    }
+}
+
+static void DAC_out_cb(void *opaque, int free_b)
+{
+    AtjDACState *s = opaque;
+
+    int bytes = AUD_write(s->voice, s->buffer, s->buffer_level * sizeof(uint32_t));
+    int samples = bytes / sizeof(uint32_t);
+
+    s->buffer_level -= samples;
+
+    /* some samples left in buffer, move it to the beginning */
+    if (s->buffer_level > 0)
+    {
+        memmove(s->buffer,
+                s->buffer + samples,
+                s->buffer_level * sizeof(uint32_t));
+    }
+}
+
+static void DAC_init(Object *obj)
+{
+    AtjDACState *s = ATJ213X_DAC(obj);
+    SysBusDevice *dev = SYS_BUS_DEVICE(obj);
+
+    memory_region_init_io(&s->regs_region, obj, &DAC_mmio_ops, s, TYPE_ATJ213X_DAC, DAC_REG_NUM * 4);
+    sysbus_init_mmio(dev, &s->regs_region);
+
+    /* register audio card */
+    AUD_register_card("dac", &s->card);
+    
+    struct audsettings as;
+    as.freq = 48000;
+    as.nchannels = 2;
+    as.fmt = AUD_FMT_S32;
+    as.endianness = 0;
+
+    s->voice = AUD_open_out(&s->card,
+                            s->voice,
+                            "dac.out",
+                            s,
+                            DAC_out_cb,
+                            &as
+    );
+
+    AUD_set_volume_out(s->voice, 0, 255, 255);
+
+    memset(s->buffer, 0x00, sizeof(s->buffer));
+    s->buffer_level = 0;
+}
+
+static void DAC_realize(DeviceState *dev, Error **errp)
+{
+}
+
+static const VMStateDescription vmstate_DAC = {
+    .name = TYPE_ATJ213X_DAC,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32_ARRAY(regs, AtjDACState, DAC_REG_NUM),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void DAC_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    dc->realize = DAC_realize;
+    dc->reset = DAC_reset;
+    dc->vmsd = &vmstate_DAC;
+    //dc->props = milkymist_sysctl_properties;
+}
+
+static const TypeInfo DAC_info = {
+    .name          = TYPE_ATJ213X_DAC,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(AtjDACState),
+    .instance_init = DAC_init,
+    .class_init    = DAC_class_init,
+};
+
+static void DAC_register_types(void)
+{
+    type_register_static(&DAC_info);
+}
+
+type_init(DAC_register_types)
+
+
+static DeviceState *DAC_create(hwaddr base)
+{
+    DeviceState *dev;
+    dev = qdev_create(NULL, TYPE_ATJ213X_DAC);
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+    return dev;
+}
+
 static void
 mips_atjsim_init(MachineState *machine)
 {
@@ -2559,7 +2742,10 @@ mips_atjsim_init(MachineState *machine)
     /* DMAC */
     DMAC_create(0x10060000, intc);
 
-    create_unimplemented_device("DAC", 0x10100000, 0x14);
+    /* DAC */
+    DAC_create(0x10100000);
+    //create_unimplemented_device("DAC", 0x10100000, 0x14);
+
     create_unimplemented_device("UDC", 0x100e0000, 0x1000);
     create_unimplemented_device("I2C", 0x10180000, 0x100);
     create_unimplemented_device("SDRAMC", 0x10070000, 0x1c);
