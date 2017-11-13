@@ -2508,9 +2508,16 @@ static void DAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
     switch (addr)
     {
         case DAC_DAT:
+//fprintf(stderr, "%s() addr: %lx, val: %lx\n", __func__, addr<<2, value);
+
             if (s->buffer_level < ATJ_DAC_BUFFER_SIZE)
             {
                 s->buffer[s->buffer_level++] = value;
+            }
+            
+            if (s->buffer_level > ATJ_DAC_BUFFER_SIZE/2)
+            {
+                AUD_set_active_out(s->voice, 1);
             }
             break;
 
@@ -2542,20 +2549,31 @@ static void DAC_reset(DeviceState *d)
 
 static void DAC_out_cb(void *opaque, int free_b)
 {
+    static int prev_buffer_level = 0;
     AtjDACState *s = opaque;
 
-    int bytes = AUD_write(s->voice, s->buffer, s->buffer_level * sizeof(uint32_t));
-    int samples = bytes / sizeof(uint32_t);
+    if (s->buffer_level == prev_buffer_level)
+    {
+        AUD_set_active_out(s->voice, 0);
+    }
 
-    s->buffer_level -= samples;
-
-    /* some samples left in buffer, move it to the beginning */
     if (s->buffer_level > 0)
     {
-        memmove(s->buffer,
-                s->buffer + samples,
-                s->buffer_level * sizeof(uint32_t));
+        int bytes = AUD_write(s->voice, s->buffer, s->buffer_level * sizeof(uint32_t));
+        int samples = bytes / sizeof(uint32_t);
+
+        s->buffer_level -= samples;
+
+        /* some samples left in buffer, move it to the beginning */
+        if (s->buffer_level > 0)
+        {
+            memmove(s->buffer,
+                    s->buffer + samples,
+                    s->buffer_level * sizeof(uint32_t));
+        }
     }
+
+    prev_buffer_level = s->buffer_level;
 }
 
 static void DAC_init(Object *obj)
@@ -2587,6 +2605,8 @@ static void DAC_init(Object *obj)
 
     memset(s->buffer, 0x00, sizeof(s->buffer));
     s->buffer_level = 0;
+
+    AUD_set_active_out(s->voice, 0);
 }
 
 static void DAC_realize(DeviceState *dev, Error **errp)
