@@ -1929,6 +1929,7 @@ static DeviceState *GPIO_create(hwaddr base)
     return dev;
 }
 
+
 /* DMAC Block */
 #define TYPE_ATJ213X_DMAC "atj213x-DMAC"
 #define ATJ213X_DMAC(obj) \
@@ -1961,16 +1962,41 @@ enum {
     DMAC_REG_NUM
 };
 
+enum {
+    DMA_DAC_drq,
+    DMA_ADC_drq,
+    DMA_NAND_drq,
+    DMA_SD_drq,
+    DMA_OTG_drq,
+    DMA_LCM_drq,
+    DMA_drq_NUM
+};
+
+typedef struct AtjDMAdrqState AtjDMAdrqState;
+typedef struct AtjDMAChannel AtjDMAChannel;
+
+struct AtjDMAdrqState {
+    int state;
+    AtjDMAChannel *ch;
+};
+
 struct AtjDMAChannel {
     QEMUTimer *timer;
+    AtjDMAdrqState *drq;
+
+    int no;
     uint32_t mode;
+    uint32_t __mode;
     uint32_t src;
+    uint32_t __src;
     uint32_t dst;
+    uint32_t __dst;
     uint32_t cnt;
+    uint32_t __cnt;
     uint32_t rem;
+    uint32_t __rem;
     uint32_t cmd;
 };
-typedef struct AtjDMAChannel AtjDMAChannel;
 
 struct AtjDMACState {
     SysBusDevice parent_obj;
@@ -1986,6 +2012,9 @@ struct AtjDMACState {
 
     /* irq line */
     qemu_irq dmac_irq;
+
+    /* input drq lines */
+    AtjDMAdrqState drq[DMA_drq_NUM];
 };
 typedef struct AtjDMACState AtjDMACState;
 
@@ -2001,7 +2030,270 @@ static void DMAC_update_irq(AtjDMACState *s)
     }
 }
 
-/* CHECK on hardware how does behave chan->src, chan->dst chan->rem, chan->cnt */
+enum {
+    DMA_TRG_DAC = 0x06,
+    DMA_TRG_ADC = 0x07,
+    DMA_TRG_SDARM = 0x10,
+    DMA_TRG_IRAM = 0x11,
+    DMA_TRG_NAND = 0x14,
+    DMA_TRG_SD = 0x16,
+    DMA_TRG_UDC = 0x17,
+    DMA_TRG_LCM = 0x18
+};
+
+static void DMAC_ch_run(AtjDMACState *s, int ch_no);
+static void DMAC_ch_finish(AtjDMACState *s, int ch_no);
+
+static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
+{
+    uint8_t buf[4];
+
+    AtjDMAChannel *chan = &s->ch[ch_no];
+
+    unsigned int stranwid = 1 << ((chan->__mode >> 1) & 0x03);
+    unsigned int dtranwid = 1 << ((chan->__mode >> 17) & 0x03);
+
+    while (chan->__rem && (!chan->drq || (chan->drq && chan->drq->state)))
+    {
+
+        /* source fixed size mode */
+        if (!(chan->__mode & (1<<0)))
+        {
+            /* DMA will transfer in 8bit mode when remain counter is less
+             * than Tran_Wide.
+             */
+            stranwid = (chan->__rem < stranwid) ? 1 : stranwid;
+        }
+
+        /* destination fixed size mode */
+        if (!(chan->__mode & (1<<16)))
+        {
+            /* DMA will transfer in 8bit mode when remain counter is less
+             * than Tran_Wide.
+             */
+            dtranwid = (chan->__rem < dtranwid) ? 1 : dtranwid;
+        }
+
+        int xsize = (dtranwid < stranwid) ? stranwid : dtranwid;
+        for (int n = 0; n < xsize; n += stranwid)
+        {
+            cpu_physical_memory_read(chan->__src, buf + n, stranwid);
+
+            /* source fixed address */
+            if (!(chan->__mode & (1<<8)))
+            {
+                /* source address change direction */
+                if (chan->__mode & (1 << 9))
+                {
+                    /* SDIR = 1 - decrease */
+                    chan->__src -= stranwid;
+                }
+                else
+                {
+                    /* SDIR = 0 - increase */
+                    chan->__src += stranwid;
+                }
+            }
+        }
+
+        for (int n = 0; n < xsize; n += dtranwid)
+        {
+            cpu_physical_memory_write(chan->__dst, buf + n, dtranwid);
+
+            /* destination fixed address */
+            if (!(chan->__mode & (1 << 24)))
+            {
+                /* destination address change direction */
+                if (chan->__mode & (1 << 25))
+                {
+                    /* DDIR = 1 - decrease */
+                    chan->__dst -= dtranwid;
+                }
+                else
+                {
+                    /* DDIR = 0 - increase */
+                    chan->__dst += dtranwid;
+                }
+            }
+        }
+        chan->__rem -= xsize;
+    }
+
+    chan->rem = chan->__rem;
+
+    /* half transfer passed */
+    if (chan->__rem < chan->__cnt / 2)
+    {
+        s->irqpd |= (2 << ch_no);
+        DMAC_update_irq(s);
+    }
+
+    /* transfer complete */
+    if (!chan->__rem)
+    {
+        s->irqpd |= (1 << ch_no);
+        DMAC_update_irq(s);
+
+        if (chan->__mode & (1<<28))
+        {
+            /* In relode mode schedule next transfer immediately */
+            DMAC_ch_run(s, ch_no);
+        }
+        else
+        {
+            /* mark channle as stopped */
+            DMAC_ch_finish(s, ch_no);
+        }
+    }
+
+}
+
+static void DMAC_ch0_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 0);
+}
+
+static void DMAC_ch1_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 1);
+}
+
+static void DMAC_ch2_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 2);
+}
+
+static void DMAC_ch3_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 3);
+}
+
+static void DMAC_ch4_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 4);
+}
+
+static void DMAC_ch5_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 5);
+}
+
+static void DMAC_ch6_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 6);
+}
+
+static void DMAC_ch7_cb(void *opaque)
+{
+    //DMAC_dma_xfer(opaque, 7);
+}
+
+static int DMA_ch_active(void *opaque, int ch_no)
+{
+    AtjDMACState *s = opaque;
+    AtjDMAChannel *chan = &s->ch[ch_no];
+    return (chan->cmd & 1) && !(chan->cmd & 2);
+}
+
+static void DMA_drq(void * opaque, int n_IRQ, int level)
+{
+    AtjDMACState *s = opaque;
+    AtjDMAdrqState *d = &s->drq[n_IRQ];
+
+    d->state = level;
+
+    if (d->ch)
+    {    
+        if (level && DMA_ch_active(opaque, d->ch->no))
+        {
+            DMAC_dma_xfer(opaque, d->ch->no);
+        }
+    }
+}
+
+static AtjDMAdrqState *drq_from_trg(AtjDMACState *s, int trg)
+{
+    switch (trg)
+    {
+        case DMA_TRG_DAC:
+            return &s->drq[DMA_DAC_drq];
+
+        case DMA_TRG_ADC:
+            return &s->drq[DMA_ADC_drq];
+
+        case DMA_TRG_NAND:
+            return &s->drq[DMA_NAND_drq];
+
+//        case DMA_TRG_SD:
+//            return &s->drq[DMA_SD_drq];
+
+        case DMA_TRG_UDC:
+            return &s->drq[DMA_OTG_drq];
+
+//        case DMA_TRG_LCM:
+//            return &s->drq[DMA_LCM_drq];
+
+        default:
+            return NULL;
+    }
+}
+
+static void DMAC_ch_run(AtjDMACState *s, int ch_no)
+{
+    AtjDMAChannel *chan = &s->ch[ch_no];
+
+    trace_atj_dmac_ch_run(ch_no, chan->mode, chan->src, chan->dst, chan->cnt);
+
+    /* copy transfer params to working copy */
+    chan->__mode = chan->mode;
+    chan->__src = chan->src;
+    chan->__dst = chan->dst;
+    chan->__cnt = chan->cnt;
+    chan->__rem = chan->cnt;
+
+    int strg = (chan->mode >> 3) & 0x1f;
+    int dtrg = (chan->mode >> 19) & 0x1f;
+
+    AtjDMAdrqState *sdrq = drq_from_trg(s, strg);
+    AtjDMAdrqState *ddrq = drq_from_trg(s, dtrg);
+
+    if (sdrq && !ddrq)
+    {
+        chan->drq = sdrq;
+        sdrq->ch = chan;
+    }
+    else if (!sdrq && ddrq)
+    {
+        chan->drq = ddrq;
+        ddrq->ch = chan;
+    }
+
+    if (!chan->drq || (chan->drq && chan->drq->state))
+    {
+        DMAC_dma_xfer(s, ch_no);
+    }
+}
+
+static void DMAC_ch_finish(AtjDMACState *s, int ch_no)
+{
+    AtjDMAChannel *chan = &s->ch[ch_no];
+
+    chan->cmd &= ~1;
+
+    if (chan->drq)
+    {
+        chan->drq->ch = NULL;
+        chan->drq = NULL;
+    }
+}
+
+
+
+#if 0
+/* chan->src, chan->dst chan->cnt remain constant through
+ * whole transfer, chan->rem reflects remining bytes to
+ * transfer
+ */
 static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
 {
     uint8_t buf[4];
@@ -2085,61 +2377,24 @@ static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
      * We toggle irq pending flag however
      */
     s->irqpd |= 3 << ch_no;
-    chan->cmd &= ~1;
-
-    timer_del(chan->timer);
     DMAC_update_irq(s);
-}
 
-/* TODO: calculate actual delay based on:
- * a) amount of data to be transfered
- * b) fifo/mem freq
- */
-static void DMAC_ch_run(AtjDMACState *s, int ch_no)
-{
-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    timer_mod(s->ch[ch_no].timer, now + 300);
-}
+    if (chan->mode & (1<<28))
+    {
+        /* In relode mode schedule next transfer immediately */
+        DMAC_ch_run(s, ch_no);
+    }
+    else
+    {
+        /* mark channel as stopped */
+        chan->cmd &= ~1;
 
-static void DMAC_ch0_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 0);
+        /* remove timer from active list */
+        timer_del(chan->timer);
+    }
 }
+#endif
 
-static void DMAC_ch1_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 1);
-}
-
-static void DMAC_ch2_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 2);
-}
-
-static void DMAC_ch3_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 3);
-}
-
-static void DMAC_ch4_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 4);
-}
-
-static void DMAC_ch5_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 5);
-}
-
-static void DMAC_ch6_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 6);
-}
-
-static void DMAC_ch7_cb(void *opaque)
-{
-    DMAC_dma_xfer(opaque, 7);
-}
 
 static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
 {
@@ -2170,7 +2425,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_MODE:
         case DMA6_MODE:
         case DMA7_MODE:
-            ch_no = (addr - DMA0_MODE)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_MODE)/8;
             r = s->ch[ch_no].mode;
             break;
 
@@ -2182,7 +2437,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_SRC:
         case DMA6_SRC:
         case DMA7_SRC:
-            ch_no = (addr - DMA0_SRC)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_SRC)/8;
             r = s->ch[ch_no].src;
             break;
 
@@ -2194,7 +2449,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_DST:
         case DMA6_DST:
         case DMA7_DST:
-            ch_no = (addr - DMA0_DST)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_DST)/8;
             r = s->ch[ch_no].dst;
             break;
 
@@ -2206,7 +2461,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_CNT:
         case DMA6_CNT:
         case DMA7_CNT:
-            ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_CNT)/8;
             r = s->ch[ch_no].cnt;
             break;
 
@@ -2218,7 +2473,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_REM:
         case DMA6_REM:
         case DMA7_REM:
-            ch_no = (addr - DMA0_REM)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_REM)/8;
             r = s->ch[ch_no].rem;
             break;
 
@@ -2230,7 +2485,7 @@ static uint64_t DMAC_read(void *opaque, hwaddr  addr, unsigned size)
         case DMA5_CMD:
         case DMA6_CMD:
         case DMA7_CMD:
-            ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_CMD)/8;
             r = s->ch[ch_no].cmd;
             break;
 
@@ -2274,7 +2529,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_MODE:
         case DMA6_MODE:
         case DMA7_MODE:
-            ch_no = (addr - DMA0_MODE)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_MODE)/8;
             s->ch[ch_no].mode = value;
             break;
 
@@ -2286,7 +2541,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_SRC:
         case DMA6_SRC:
         case DMA7_SRC:
-            ch_no = (addr - DMA0_SRC)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_SRC)/8;
             s->ch[ch_no].src = value;
             break;
 
@@ -2298,7 +2553,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_DST:
         case DMA6_DST:
         case DMA7_DST:
-            ch_no = (addr - DMA0_DST)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_DST)/8;
             s->ch[ch_no].dst = value;
             break;
 
@@ -2310,7 +2565,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_CNT:
         case DMA6_CNT:
         case DMA7_CNT:
-            ch_no = (addr - DMA0_CNT)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_CNT)/8;
             s->ch[ch_no].cnt = value;
             break;
 
@@ -2322,7 +2577,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_REM:
         case DMA6_REM:
         case DMA7_REM:
-            ch_no = (addr - DMA0_REM)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_REM)/8;
             s->ch[ch_no].rem = value;
             break;
 
@@ -2334,7 +2589,7 @@ static void DMAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
         case DMA5_CMD:
         case DMA6_CMD:
         case DMA7_CMD:
-            ch_no = (addr - DMA0_CMD)/(sizeof(AtjDMAChannel)/4);
+            ch_no = (addr - DMA0_CMD)/8;
             s->ch[ch_no].cmd = value;
             if (value & 1)
             {
@@ -2357,6 +2612,21 @@ static const MemoryRegionOps DMAC_mmio_ops = {
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
+static void DMAC_ch_reset(void *opaque, int ch_no)
+{
+    AtjDMACState *s = opaque;
+    AtjDMAChannel *ch = &s->ch[ch_no];
+
+    ch->no = ch_no;
+    ch->drq = NULL;
+    ch->mode = ch->__mode = 0;
+    ch->src = ch->__src = 0;
+    ch->dst = ch->__dst = 0;
+    ch->cnt = ch->__cnt = 0;
+    ch->rem = ch->__rem = 0;
+    ch->cmd = 0;
+}
+
 static void DMAC_reset(DeviceState *d)
 {
     AtjDMACState *s = ATJ213X_DMAC(d);
@@ -2364,6 +2634,17 @@ static void DMAC_reset(DeviceState *d)
     s->ctl = 0;
     s->irqen = 0;
     s->irqpd = 0;
+
+    for (int i=0; i<DMAC_CHANNELS_NUM; i++)
+    {
+        DMAC_ch_reset(s, i);
+    }
+
+    for (int i=0; i<DMA_drq_NUM; i++)
+    {
+        AtjDMAdrqState *drq = &s->drq[i];
+        drq->ch = NULL;
+    }
 }
 
 static void DMAC_init(Object *obj)
@@ -2388,6 +2669,8 @@ static void DMAC_init(Object *obj)
 
 static void DMAC_realize(DeviceState *dev, Error **errp)
 {
+    /* drq lines of DAC, ADC, NAND, SD, OTG, LCM */
+    qdev_init_gpio_in(dev, DMA_drq, DMA_drq_NUM);
 }
 
 static const VMStateDescription vmstate_DMAC_ch = {
@@ -2462,6 +2745,8 @@ static DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
 #define ATJ213X_DAC(obj) \
     OBJECT_CHECK(AtjDACState, (obj), TYPE_ATJ213X_DAC)
 
+/* 512 samples, two channels, S32 format */
+#define ATJ_DAC_BUFFER_SIZE (16)
 enum {
     DAC_CTL,
     DAC_FIFOCTL,
@@ -2471,7 +2756,6 @@ enum {
     DAC_REG_NUM
 };
 
-#define ATJ_DAC_BUFFER_SIZE (512 * 2)
 struct AtjDACState {
     SysBusDevice parent_obj;
     MemoryRegion regs_region;
@@ -2479,10 +2763,25 @@ struct AtjDACState {
 
     QEMUSoundCard card;
     SWVoiceOut *voice;
+    qemu_irq dma_rdy;
+
+    uint32_t silence[ATJ_DAC_BUFFER_SIZE];
     uint32_t buffer[ATJ_DAC_BUFFER_SIZE];
     uint32_t buffer_level;
 };
 typedef struct AtjDACState AtjDACState;
+
+static void update_drq(AtjDACState *s)
+{
+    if (s->buffer_level > 0)
+    {
+        qemu_irq_lower(s->dma_rdy);
+    }
+    else
+    {
+        qemu_irq_raise(s->dma_rdy);
+    }
+}
 
 static uint64_t DAC_read(void *opaque, hwaddr  addr, unsigned size)
 {
@@ -2507,17 +2806,24 @@ static void DAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
     addr >>= 2;
     switch (addr)
     {
-        case DAC_DAT:
-//fprintf(stderr, "%s() addr: %lx, val: %lx\n", __func__, addr<<2, value);
+        case DAC_FIFOCTL:
+            if (value & 1)
+            {
+                s->buffer_level = 0;
+                update_drq(s);
+            }
+            break;
 
+        case DAC_DAT:
             if (s->buffer_level < ATJ_DAC_BUFFER_SIZE)
             {
                 s->buffer[s->buffer_level++] = value;
-            }
-            
-            if (s->buffer_level > ATJ_DAC_BUFFER_SIZE/2)
-            {
-                AUD_set_active_out(s->voice, 1);
+
+                if (s->buffer_level == ATJ_DAC_BUFFER_SIZE)
+                {
+                    update_drq(s);
+                    AUD_set_active_out(s->voice, 1);
+                }
             }
             break;
 
@@ -2547,33 +2853,48 @@ static void DAC_reset(DeviceState *d)
     }
 }
 
-static void DAC_out_cb(void *opaque, int free_b)
+
+static void xfer_to_AUD(void *opaque, void *buffer, int bytes)
 {
-    static int prev_buffer_level = 0;
     AtjDACState *s = opaque;
 
-    if (s->buffer_level == prev_buffer_level)
+    while (bytes)
     {
-        AUD_set_active_out(s->voice, 0);
-    }
-
-    if (s->buffer_level > 0)
-    {
-        int bytes = AUD_write(s->voice, s->buffer, s->buffer_level * sizeof(uint32_t));
-        int samples = bytes / sizeof(uint32_t);
-
-        s->buffer_level -= samples;
-
-        /* some samples left in buffer, move it to the beginning */
-        if (s->buffer_level > 0)
+        int copied = AUD_write(s->voice, buffer, bytes);
+        if (!copied)
         {
-            memmove(s->buffer,
-                    s->buffer + samples,
-                    s->buffer_level * sizeof(uint32_t));
+            return;
         }
-    }
 
-    prev_buffer_level = s->buffer_level;
+        bytes -= copied;
+        buffer += copied;
+    }
+}
+
+static void DAC_out_cb(void *opaque, int free_b)
+{
+    AtjDACState *s = opaque;
+
+    void *buffer;
+    int bytes;
+
+    trace_atj_dac_out_cb(s->buffer_level, free_b);
+
+    if (s->buffer_level == ATJ_DAC_BUFFER_SIZE)
+    {
+        buffer = s->buffer;
+        bytes = s->buffer_level * sizeof(uint32_t);
+
+        xfer_to_AUD(opaque, buffer, bytes);
+        s->buffer_level = 0;
+        update_drq(s);
+    }
+    else
+    {
+        buffer = s->silence;
+        bytes = sizeof(s->silence);
+        xfer_to_AUD(opaque, buffer, bytes);
+    }
 }
 
 static void DAC_init(Object *obj)
@@ -2583,6 +2904,7 @@ static void DAC_init(Object *obj)
 
     memory_region_init_io(&s->regs_region, obj, &DAC_mmio_ops, s, TYPE_ATJ213X_DAC, DAC_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
+
 
     /* register audio card */
     AUD_register_card("dac", &s->card);
@@ -2603,6 +2925,7 @@ static void DAC_init(Object *obj)
 
     AUD_set_volume_out(s->voice, 0, 255, 255);
 
+    memset(s->silence, 0x00, sizeof(s->silence));
     memset(s->buffer, 0x00, sizeof(s->buffer));
     s->buffer_level = 0;
 
@@ -2611,6 +2934,8 @@ static void DAC_init(Object *obj)
 
 static void DAC_realize(DeviceState *dev, Error **errp)
 {
+    AtjDACState *s = ATJ213X_DAC(dev);
+    qdev_init_gpio_out(dev, &s->dma_rdy, 1);
 }
 
 static const VMStateDescription vmstate_DAC = {
@@ -2760,11 +3085,12 @@ mips_atjsim_init(MachineState *machine)
     AtjGPIOState *gpio = (AtjGPIOState *)GPIO_create(0x101c0000);
 
     /* DMAC */
-    DMAC_create(0x10060000, intc);
+    AtjDMACState *dmac = (AtjDMACState *)DMAC_create(0x10060000, intc);
 
     /* DAC */
-    DAC_create(0x10100000);
-    //create_unimplemented_device("DAC", 0x10100000, 0x14);
+    AtjDACState *dac = (AtjDACState *)DAC_create(0x10100000);
+
+    qdev_connect_gpio_out(DEVICE(dac), 0, qdev_get_gpio_in(DEVICE(dmac), 0));
 
     create_unimplemented_device("UDC", 0x100e0000, 0x1000);
     create_unimplemented_device("I2C", 0x10180000, 0x100);
