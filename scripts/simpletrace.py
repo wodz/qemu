@@ -240,16 +240,19 @@ if __name__ == '__main__':
     class Formatter(Analyzer):
         def __init__(self):
             self.last_timestamp = None
+            self.start_timestamp = None
 
         def catchall(self, event, rec):
             timestamp = rec[1]
+            if self.start_timestamp is None:
+                self.start_timestamp = timestamp
+
             if self.last_timestamp is None:
                 self.last_timestamp = timestamp
             delta_ns = timestamp - self.last_timestamp
             self.last_timestamp = timestamp
 
-            fields = [event.name, '%0.3f' % (delta_ns / 1000.0),
-                      'pid=%d' % rec[2]]
+            fields = ['%d | ' % ((timestamp - self.start_timestamp)/ 1000), event.name, ' | %0.3f |' % (delta_ns / 1000.0)]
             i = 3
             for type, name in event.args:
                 if is_string(type):
@@ -259,4 +262,5 @@ if __name__ == '__main__':
                 i += 1
             print ' '.join(fields)
 
+    print('timestamp (us) | event | time delta (us) | args\n')
     run(Formatter())
