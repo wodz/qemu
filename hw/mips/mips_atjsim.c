@@ -2740,13 +2740,19 @@ static DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
     return dev;
 }
 
+//#define ATJ_DUMP_DAC_INPUT
+
 /* DAC Block */
 #define TYPE_ATJ213X_DAC "atj213x-DAC"
 #define ATJ213X_DAC(obj) \
     OBJECT_CHECK(AtjDACState, (obj), TYPE_ATJ213X_DAC)
 
 /* 512 samples, two channels, S32 format */
-#define ATJ_DAC_BUFFER_SIZE (16)
+#define ATJ_DAC_BUFFER_SIZE (512 * 4 * 2)
+#ifdef ATJ_DUMP_DAC_INPUT
+static FILE *fp_dac_input;
+#endif
+
 enum {
     DAC_CTL,
     DAC_FIFOCTL,
@@ -2773,7 +2779,7 @@ typedef struct AtjDACState AtjDACState;
 
 static void update_drq(AtjDACState *s)
 {
-    if (s->buffer_level > 0)
+    if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE)
     {
         qemu_irq_lower(s->dma_rdy);
     }
@@ -2819,10 +2825,15 @@ static void DAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             {
                 s->buffer[s->buffer_level++] = value;
 
-                if (s->buffer_level == ATJ_DAC_BUFFER_SIZE)
+                if (s->buffer_level == ATJ_DAC_BUFFER_SIZE/4)
+                {
+//                    update_drq(s);
+fprintf(stderr, "AUD_set_active_out\n");
+                    AUD_set_active_out(s->voice, 1);
+                }
+                else if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE)
                 {
                     update_drq(s);
-                    AUD_set_active_out(s->voice, 1);
                 }
             }
             break;
@@ -2854,21 +2865,28 @@ static void DAC_reset(DeviceState *d)
 }
 
 
-static void xfer_to_AUD(void *opaque, void *buffer, int bytes)
+static int xfer_to_AUD(void *opaque, void *buffer, int bytes)
 {
     AtjDACState *s = opaque;
+    static int i = 0;
+    int xfered = 0;
 
     while (bytes)
     {
-        int copied = AUD_write(s->voice, buffer, bytes);
-        if (!copied)
+        int n = AUD_write(s->voice, buffer, bytes);
+        if (!n)
         {
-            return;
+fprintf(stderr,"%d: Underflow: %d/%d\n", i, n, bytes);
+            break;
         }
-
-        bytes -= copied;
-        buffer += copied;
+        bytes -= n;
+        buffer += n;
+        xfered += n;
     }
+
+    i++;
+
+    return xfered;
 }
 
 static void DAC_out_cb(void *opaque, int free_b)
@@ -2880,21 +2898,32 @@ static void DAC_out_cb(void *opaque, int free_b)
 
     trace_atj_dac_out_cb(s->buffer_level, free_b);
 
-    if (s->buffer_level == ATJ_DAC_BUFFER_SIZE)
+    if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE/4)
     {
         buffer = s->buffer;
         bytes = s->buffer_level * sizeof(uint32_t);
+#ifdef ATJ_DUMP_DAC_INPUT
+        fwrite((void *)s->buffer, sizeof(uint8_t), bytes, fp_dac_input);
+        fflush(fp_dac_input);
+#endif
+        int xfered = xfer_to_AUD(opaque, buffer, bytes);
+fprintf(stderr, "DAC_out_cb xfered = %d, requested = %d\n", xfered, bytes);
+        s->buffer_level -= xfered/sizeof(uint32_t);
 
-        xfer_to_AUD(opaque, buffer, bytes);
-        s->buffer_level = 0;
+        if (s->buffer_level)
+        {
+            memmove(s->buffer, s->buffer + (xfered/sizeof(uint32_t)), s->buffer_level*sizeof(uint32_t));
+        }
         update_drq(s);
     }
+#if 0
     else
     {
         buffer = s->silence;
         bytes = sizeof(s->silence);
         xfer_to_AUD(opaque, buffer, bytes);
     }
+#endif
 }
 
 static void DAC_init(Object *obj)
@@ -2910,7 +2939,7 @@ static void DAC_init(Object *obj)
     AUD_register_card("dac", &s->card);
     
     struct audsettings as;
-    as.freq = 48000;
+    as.freq = 44100;
     as.nchannels = 2;
     as.fmt = AUD_FMT_S32;
     as.endianness = 0;
@@ -2930,6 +2959,14 @@ static void DAC_init(Object *obj)
     s->buffer_level = 0;
 
     AUD_set_active_out(s->voice, 0);
+
+#ifdef ATJ_DUMP_DAC_INPUT
+    fp_dac_input = fopen("atj_dac_input.pcm", "wb");
+    if (!fp_dac_input) {
+        hw_error("Unable to open atj_dac_input.pcm for writing\n");
+    }
+#endif
+
 }
 
 static void DAC_realize(DeviceState *dev, Error **errp)
