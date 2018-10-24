@@ -1996,6 +1996,7 @@ struct AtjDMAChannel {
     uint32_t rem;
     uint32_t __rem;
     uint32_t cmd;
+    uint32_t __cmd;
 };
 
 struct AtjDMACState {
@@ -2125,14 +2126,12 @@ static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
     if (chan->__rem < chan->__cnt / 2)
     {
         s->irqpd |= (2 << ch_no);
-        DMAC_update_irq(s);
     }
 
     /* transfer complete */
     if (!chan->__rem)
     {
         s->irqpd |= (1 << ch_no);
-        DMAC_update_irq(s);
 
         if (chan->__mode & (1<<28))
         {
@@ -2146,65 +2145,69 @@ static void DMAC_dma_xfer(AtjDMACState *s, int ch_no)
         }
     }
 
+    DMAC_update_irq(s);
 }
 
 static void DMAC_ch0_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 0);
+    DMAC_dma_xfer(opaque, 0);
 }
 
 static void DMAC_ch1_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 1);
+    DMAC_dma_xfer(opaque, 1);
 }
 
 static void DMAC_ch2_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 2);
+    DMAC_dma_xfer(opaque, 2);
 }
 
 static void DMAC_ch3_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 3);
+    DMAC_dma_xfer(opaque, 3);
 }
 
 static void DMAC_ch4_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 4);
+    DMAC_dma_xfer(opaque, 4);
 }
 
 static void DMAC_ch5_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 5);
+    DMAC_dma_xfer(opaque, 5);
 }
 
 static void DMAC_ch6_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 6);
+    DMAC_dma_xfer(opaque, 6);
 }
 
 static void DMAC_ch7_cb(void *opaque)
 {
-    //DMAC_dma_xfer(opaque, 7);
+    DMAC_dma_xfer(opaque, 7);
 }
 
+#if 0
 static int DMA_ch_active(void *opaque, int ch_no)
 {
     AtjDMACState *s = opaque;
     AtjDMAChannel *chan = &s->ch[ch_no];
     return (chan->cmd & 1) && !(chan->cmd & 2);
 }
+#endif
 
 static void DMA_drq(void * opaque, int n_IRQ, int level)
 {
     AtjDMACState *s = opaque;
     AtjDMAdrqState *d = &s->drq[n_IRQ];
 
+    trace_atj_dmac_drq(n_IRQ, level, d->ch ? d->ch->no : -1, d->ch ? d->ch->cmd : -1);
     d->state = level;
 
     if (d->ch)
     {    
-        if (level && DMA_ch_active(opaque, d->ch->no))
+        if (level)// && DMA_ch_active(opaque, d->ch->no))
         {
             DMAC_dma_xfer(opaque, d->ch->no);
         }
@@ -2242,17 +2245,27 @@ static void DMAC_ch_run(AtjDMACState *s, int ch_no)
 {
     AtjDMAChannel *chan = &s->ch[ch_no];
 
-    trace_atj_dmac_ch_run(ch_no, chan->mode, chan->src, chan->dst, chan->cnt);
 
     /* copy transfer params to working copy */
-    chan->__mode = chan->mode;
-    chan->__src = chan->src;
-    chan->__dst = chan->dst;
-    chan->__cnt = chan->cnt;
-    chan->__rem = chan->cnt;
+    if (!chan->__cmd)
+    {
+        chan->__mode = chan->mode;
+        chan->__src = chan->src;
+        chan->__dst = chan->dst;
+        chan->__cnt = chan->cnt;
+        chan->__rem = chan->cnt;
+        chan->__cmd = chan->cmd;
 
-    int strg = (chan->mode >> 3) & 0x1f;
-    int dtrg = (chan->mode >> 19) & 0x1f;
+        trace_atj_dmac_ch_run(ch_no, 0, chan->__mode, chan->__src, chan->__dst, chan->__cnt);
+    }
+    else
+    {
+        trace_atj_dmac_ch_run(ch_no, 0, chan->__mode, chan->__src, chan->__dst, chan->__cnt);
+    }
+
+
+    int strg = (chan->__mode >> 3) & 0x1f;
+    int dtrg = (chan->__mode >> 19) & 0x1f;
 
     AtjDMAdrqState *sdrq = drq_from_trg(s, strg);
     AtjDMAdrqState *ddrq = drq_from_trg(s, dtrg);
@@ -2278,7 +2291,10 @@ static void DMAC_ch_finish(AtjDMACState *s, int ch_no)
 {
     AtjDMAChannel *chan = &s->ch[ch_no];
 
+    trace_atj_dmac_ch_finish(ch_no);
+
     chan->cmd &= ~1;
+    chan->__cmd = 0;
 
     if (chan->drq)
     {
@@ -2747,8 +2763,8 @@ static DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
 #define ATJ213X_DAC(obj) \
     OBJECT_CHECK(AtjDACState, (obj), TYPE_ATJ213X_DAC)
 
-/* 512 samples, two channels, S32 format */
-#define ATJ_DAC_BUFFER_SIZE (512 * 4 * 2)
+/* 256 samples, two channels, S32 format */
+#define ATJ_DAC_BUFFER_SIZE (256 * 2 * 4)
 #ifdef ATJ_DUMP_DAC_INPUT
 static FILE *fp_dac_input;
 #endif
@@ -2771,7 +2787,7 @@ struct AtjDACState {
     SWVoiceOut *voice;
     qemu_irq dma_rdy;
 
-    uint32_t silence[ATJ_DAC_BUFFER_SIZE];
+    uint32_t silence[ATJ_DAC_BUFFER_SIZE/4];
     uint32_t buffer[ATJ_DAC_BUFFER_SIZE];
     uint32_t buffer_level;
 };
@@ -2825,13 +2841,7 @@ static void DAC_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
             {
                 s->buffer[s->buffer_level++] = value;
 
-                if (s->buffer_level == ATJ_DAC_BUFFER_SIZE/4)
-                {
-//                    update_drq(s);
-fprintf(stderr, "AUD_set_active_out\n");
-                    AUD_set_active_out(s->voice, 1);
-                }
-                else if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE)
+                if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE)
                 {
                     update_drq(s);
                 }
@@ -2868,23 +2878,16 @@ static void DAC_reset(DeviceState *d)
 static int xfer_to_AUD(void *opaque, void *buffer, int bytes)
 {
     AtjDACState *s = opaque;
-    static int i = 0;
     int xfered = 0;
+    int n = 0;
 
-    while (bytes)
+    do
     {
-        int n = AUD_write(s->voice, buffer, bytes);
-        if (!n)
-        {
-fprintf(stderr,"%d: Underflow: %d/%d\n", i, n, bytes);
-            break;
-        }
+        n = AUD_write(s->voice, buffer, bytes);
         bytes -= n;
-        buffer += n;
+        buffer +=n;
         xfered += n;
-    }
-
-    i++;
+    } while (n);
 
     return xfered;
 }
@@ -2898,32 +2901,27 @@ static void DAC_out_cb(void *opaque, int free_b)
 
     trace_atj_dac_out_cb(s->buffer_level, free_b);
 
-    if (s->buffer_level >= ATJ_DAC_BUFFER_SIZE/4)
+    if (s->buffer_level)// >= ATJ_DAC_BUFFER_SIZE/4)
     {
         buffer = s->buffer;
         bytes = s->buffer_level * sizeof(uint32_t);
-#ifdef ATJ_DUMP_DAC_INPUT
-        fwrite((void *)s->buffer, sizeof(uint8_t), bytes, fp_dac_input);
-        fflush(fp_dac_input);
-#endif
+
         int xfered = xfer_to_AUD(opaque, buffer, bytes);
-fprintf(stderr, "DAC_out_cb xfered = %d, requested = %d\n", xfered, bytes);
         s->buffer_level -= xfered/sizeof(uint32_t);
 
         if (s->buffer_level)
         {
             memmove(s->buffer, s->buffer + (xfered/sizeof(uint32_t)), s->buffer_level*sizeof(uint32_t));
         }
-        update_drq(s);
     }
-#if 0
     else
     {
         buffer = s->silence;
         bytes = sizeof(s->silence);
         xfer_to_AUD(opaque, buffer, bytes);
     }
-#endif
+
+    update_drq(s);
 }
 
 static void DAC_init(Object *obj)
@@ -2958,7 +2956,7 @@ static void DAC_init(Object *obj)
     memset(s->buffer, 0x00, sizeof(s->buffer));
     s->buffer_level = 0;
 
-    AUD_set_active_out(s->voice, 0);
+    AUD_set_active_out(s->voice, 1);
 
 #ifdef ATJ_DUMP_DAC_INPUT
     fp_dac_input = fopen("atj_dac_input.pcm", "wb");
