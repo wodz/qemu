@@ -1,4 +1,5 @@
-obj-y += mips_r4k.o mips_malta.o mips_mipssim.o mips_atjsim.o
+obj-y += mips_r4k.o mips_malta.o mips_mipssim.o
+obj-y += atj213x_cmu.o atj213x_pmu.o atj213x_intc.o atj213x_rtc.o atj213x_sdc.o atj213x_gpio.o atj213x_dmac.o atj213x_dac.o atj213x_yuv2rgb.o mips_atjsim.o
 obj-y += addr.o mips_int.o
 obj-$(CONFIG_JAZZ) += mips_jazz.o
 obj-$(CONFIG_FULONG) += mips_fulong2e.o

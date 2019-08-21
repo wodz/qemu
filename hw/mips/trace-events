@@ -1,49 +1,50 @@
 # See docs/devel/tracing.txt for syntax documentation.
 
-# hw/mips/mips_atjsim.c
-# CMU block
+# CMU block hw/mips/atj213x_cmu.c
 atj_cmu_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_cmu_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 
-# PMU block
+# PMU block hw/mips/atj213x_pmu.c
 atj_pmu_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_pmu_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 atj_backlight(uint32_t val) "backlight = 0x%0x"
 
-# INTC block
+# INTC block hw/mips/atj213x_intc.c
 atj_intc_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_intc_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 atj_intc_in(uint32_t mask, uint32_t level) "intc in irq = 0x%0x level = 0x%0x"
 atj_intc_out(uint32_t irq, uint32_t level) "intc out irq = 0x%0x level = 0x%0x"
 
-# RTC block
+# RTC block hw/mips/atj213x_rtc.c
 atj_rtc_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_rtc_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 
-# SDC block
+# SDC block hw/mips/atj213x_sdc.c
 atj_sdc_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_sdc_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 atj_sdc_dat_read(uint32_t val) "read sdc_dat = 0x%0x"
 atj_sdc_dat_write(uint32_t val) "write sdc_dat = 0x%0x"
 
-# YUV2RGB block
+# YUV2RGB block hw/mips/atj213x_yuv2rgb.c
 atj_yuv2rgb_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_yuv2rgb_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 
-# input layer
+# input layer hw/mips/atjsim.c
 atj_put_key(int keycode) "input keycode = 0x%0x"
 
-# GPIO block
+# GPIO block hw/mips/atj213x_gpio.c
 atj_gpio_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_gpio_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 atj_gpio_in_update(int port, int bit, int level) "gpio port = 0x%0x bit = 0x%0x level = 0x%0x"
 
-# DMAC block
+# DMAC block hw/mips/atj213x_dmac.c
 atj_dmac_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_dmac_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
-atj_dmac_ch_run(int ch_no, uint32_t mode, uint32_t src, uint32_t dst, uint32_t cnt) "ch = 0x%x mode = 0x%x src = 0x%x dst = 0x%x cnt = 0x%x"
+atj_dmac_ch_run(int ch_no, uint32_t cmd, uint32_t mode, uint32_t src, uint32_t dst, uint32_t cnt) "ch = 0x%x cmd = 0x%x mode = 0x%x src = 0x%x dst = 0x%x cnt = 0x%x"
+atj_dmac_drq(int n_IRQ, int level, int ch_no, int ch_cmd) "drq = 0x%0x level = 0x%0x ch_no = %d ch_cmd = %d"
+atj_dmac_ch_finish(int ch_no) "ch_no = 0x%0x"
 
-# DAC block
+# DAC block hw/mips/atj213x_dac.c
 atj_dac_read(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
 atj_dac_write(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
 atj_dac_out_cb(int buffer_level, int free_b) "buffer_level = 0x%x free = 0x%x"
