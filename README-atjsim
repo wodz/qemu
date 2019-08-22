@@ -1,0 +1,33 @@
+# INFO
+This is Iriver E150 emulator. It is enough to run work-in-progress port of
+rockbox for this platform (https://github.com/wodz/rockbox-wodz/tree/atj213x).
+
+You need to prepare raw image of sd card with .rockbox folder to run it.
+
+Emulated hardware buttons and hw lines on Iriver e150
+some inputs are connected to gpios, some are to ADC
+
+  PC button  | Iriver button | comment
+  -----------+---------------+---------------------------------
+    ESC      |  ON           | !GPIOA8
+    h        |  hold         | !GPIOA10 defaults to not on hold
+    pageup   |  vol+         | !GPIOA12
+    pagedown |  vol-         | GPIOB31
+    left     |  left         | ADC 0x04
+    right    |  right        | ADC 0x0c
+    up       |  up           | ADC 0x02
+    down     |  down         | ADC 0x08
+    ENTER    |  select       | ADC 0x06
+    p        |  headphone    | !GPIOA26 defaults to inserted
+    s        |  SD detect    | !GPIOB22 defaults to inserted
+    <        |  dec BAT      |
+    >        |  inc BAT      |
+
+
+
+# BUILDING
+./configure --target-list=mipsel-softmmu --enable-trace-backends=simple --audio-drv-list=alsa
+make
+
+# RUNNING
+mipsel-softmmu/qemu-system-mipsel -machine atjsim -kernel /home/wodz/rockbox-wodz/build/rockbox.bin -drive format=raw,file=sd.img,if=sd
