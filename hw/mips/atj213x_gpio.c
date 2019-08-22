@@ -67,17 +67,7 @@ static uint64_t GPIO_read(void *opaque, hwaddr  addr, unsigned size)
     AtjGPIOState *s = opaque;
 
     addr >>= 2;
-    switch (addr)
-    {
-        case GPIO_ADAT:
-            trace_atj_gpio_read(addr<<2, s->regs[addr]);
-            break;
-
-        default:
-            qemu_log("%s() addr: 0x" TARGET_FMT_plx "\n", __func__, addr<<2);
-            break;
-    }
-
+    trace_atj_gpio_read(addr<<2, s->regs[addr]);
     return s->regs[addr];
 }
 
