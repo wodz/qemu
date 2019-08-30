@@ -860,7 +860,7 @@ static sd_rsp_type_t sd_normal_command(SDState *sd,
                 break;
 
             sd->state = sd_standby_state;
-            return sd_r1b;
+            return sd_r0;
 
         case sd_disconnect_state:
             if (sd->rca != rca)
@@ -874,7 +874,7 @@ static sd_rsp_type_t sd_normal_command(SDState *sd,
                 break;
 
             sd->state = sd_disconnect_state;
-            return sd_r1b;
+            return sd_r0;
 
         default:
             break;
