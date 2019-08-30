@@ -24,6 +24,7 @@
 #include "exec/cpu_ldst.h"
 #include "exec/log.h"
 #include "hw/mips/cpudevs.h"
+#include "trace.h"
 
 enum {
     TLBRET_XI = -6,
@@ -517,6 +518,8 @@ static void raise_mmu_exception(CPUMIPSState *env, target_ulong address,
 #endif
     cs->exception_index = exception;
     env->error_code = error_code;
+
+    trace_mips_mmu_exception(address, tlb_error, exception, error_code);
 }
 
 #if !defined(CONFIG_USER_ONLY)

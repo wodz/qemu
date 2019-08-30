@@ -3,3 +3,7 @@
 # target/mips/translate.c
 mips_translate_c0(const char *instr, const char *rn, int reg, int sel) "%s %s (reg %d sel %d)"
 mips_translate_tr(const char *instr, int rt, int u, int sel, int h) "%s (reg %d u %d sel %d h %d)"
+
+# target/mips/helper.c
+mips_mmu_exception(uint64_t address, int tlb_error, int exception, int error_code) "MMU exception addr=0x%"PRIx64" tlb_error=%d exc=%d err=%d"
+
