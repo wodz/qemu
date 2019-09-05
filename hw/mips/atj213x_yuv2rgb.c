@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "qemu-common.h"
 #include "hw/sysbus.h"
 #include "exec/log.h"
@@ -176,10 +177,6 @@ static void YUV2RGB_reset(DeviceState *d)
     s->row_end = LCD_HEIGHT - 1;
 }
 
-static void yuv2rgb_invalidate_display(void *opaque)
-{
-}
-
 static void yuv2rgb_update_display(void *opaque)
 {
     AtjYUV2RGBState *s = opaque;
@@ -228,7 +225,6 @@ static void yuv2rgb_update_display(void *opaque)
 }
 
 static const GraphicHwOps yuv2rgb_ops = {
-    .invalidate  = yuv2rgb_invalidate_display,
     .gfx_update  = yuv2rgb_update_display,
 };
 
@@ -236,6 +232,12 @@ static void YUV2RGB_init(Object *obj)
 {
     AtjYUV2RGBState *s = ATJ213X_YUV2RGB(obj);
     SysBusDevice *dev = SYS_BUS_DEVICE(obj);
+
+    object_property_add_link(OBJECT(s), "pmu", TYPE_ATJ213X_PMU,
+                             (Object **)&s->pmu,
+                             object_property_allow_set_link,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &error_abort);
 
     memory_region_init_io(&s->regs_region, obj, &YUV2RGB_mmio_ops, s, TYPE_ATJ213X_YUV2RGB, YUV2RGB_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
@@ -283,7 +285,6 @@ static void YUV2RGB_class_init(ObjectClass *klass, void *data)
     dc->realize = YUV2RGB_realize;
     dc->reset = YUV2RGB_reset;
     dc->vmsd = &YUV2RGB_vmstate;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo YUV2RGB_info = {
@@ -304,10 +305,10 @@ DeviceState *YUV2RGB_create(hwaddr base, AtjPMUState *pmu)
 {
     DeviceState *dev;
     dev = qdev_create(NULL, TYPE_ATJ213X_YUV2RGB);
-    qdev_init_nofail(dev);
 
-    AtjYUV2RGBState *s = (AtjYUV2RGBState *)dev;
-    s->pmu = (AtjPMUState *)pmu;
+    object_property_set_link(OBJECT(dev), OBJECT(pmu), "pmu", &error_abort);
+
+    qdev_init_nofail(dev);
 
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
     return dev;

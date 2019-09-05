@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "cpu.h"
 #include "hw/ptimer.h"
 #include "sysemu/sysemu.h"
@@ -210,6 +211,12 @@ static void RTC_init(Object *obj)
     AtjRTCState *s = ATJ213X_RTC(obj);
     SysBusDevice *dev = SYS_BUS_DEVICE(obj);
 
+    object_property_add_link(OBJECT(s), "cmu", TYPE_ATJ213X_CMU,
+                             (Object **)&s->cmu,
+                             object_property_allow_set_link,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &error_abort);
+
     memory_region_init_io(&s->regs_region, obj, &RTC_mmio_ops, s, TYPE_ATJ213X_RTC, RTC_REG_NUM * 4);
     sysbus_init_mmio(dev, &s->regs_region);
 
@@ -269,11 +276,13 @@ DeviceState *RTC_create(hwaddr base, AtjCMUState *cmu, AtjINTCState *intc)
 {
     DeviceState *dev;
     dev = qdev_create(NULL, TYPE_ATJ213X_RTC);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+    AtjRTCState *s = ATJ213X_RTC(dev);
 
-    AtjRTCState *s = (AtjRTCState *)dev;
-    s->cmu = (AtjCMUState *)cmu;
+    object_property_set_link(OBJECT(s), OBJECT(cmu), "cmu", &error_abort);
+    
+    qdev_init_nofail(dev);
+
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
 
     /* connect RTC out irq lines to input mux of INTC */
     qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_T0));
