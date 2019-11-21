@@ -49,15 +49,7 @@
 #include "trace.h"
 #include "audio/audio.h"
 
-#include "atj213x_cmu.h"
-#include "atj213x_pmu.h"
-#include "atj213x_intc.h"
-#include "atj213x_rtc.h"
-#include "atj213x_sdc.h"
-#include "atj213x_gpio.h"
-#include "atj213x_dmac.h"
-#include "atj213x_dac.h"
-#include "atj213x_yuv2rgb.h"
+#include "atj213x_soc.h"
 
 static struct _loaderparams {
     int ram_size;
@@ -257,54 +249,47 @@ static void atj_button_init(int n, atj_button *button_desc, void *pmu)
     vmstate_register(NULL, -1, &vmstate_atj_buttons, s);
 }
 
-/* Put all parts together */
-static void
-mips_atjsim_init(MachineState *machine)
+struct IriverE150State {
+    MemoryRegion ram;
+    MemoryRegion rom;
+    Atj213xSocState soc;
+};
+typedef struct IriverE150State IriverE150State;
+
+static void IriverE150_init(MachineState *machine)
 {
-    ram_addr_t ram_size = machine->ram_size;
-    const char *cpu_model = machine->cpu_model;
+    IriverE150State *e150;
+    e150 = g_new0(IriverE150State, 1);
+    object_initialize(&e150->soc, (sizeof(e150->soc)), TYPE_ATJ213X_SOC);
+    object_property_add_child(OBJECT(machine), "soc", OBJECT(&e150->soc),
+                              &error_abort);
+    object_property_set_bool(OBJECT(&e150->soc), true, "realized",
+                             &error_abort);
+
+    /* main system memory */
+    memory_region_allocate_system_memory(&e150->ram, OBJECT(machine), "ram",
+                                         machine->ram_size);
+    memory_region_add_subregion_overlap(get_system_memory(), 0, &e150->ram, 0);
+
+    /* rom area */
+    memory_region_init_rom(&e150->rom, NULL, "rom", BIOS_SIZE, &error_abort);
+
+
+    //const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
     char *filename;
-    MemoryRegion *address_space_mem = get_system_memory();
-    MemoryRegion *ram = g_new(MemoryRegion, 1);
-    MemoryRegion *iram = g_new(MemoryRegion, 1);
-    MemoryRegion *bios = g_new(MemoryRegion, 1);
-    MIPSCPU *cpu;
-    CPUMIPSState *env;
     ResetData *reset_info;
     int bios_size;
 
-    /* Init CPUs. */
-    if (cpu_model == NULL) {
-        cpu_model = "4KEc";
-    }
-    cpu = MIPS_CPU(cpu_generic_init(TYPE_MIPS_CPU, cpu_model));
-    env = &cpu->env;
+    MIPSCPU *cpu = &e150->soc.cpu;
+    CPUMIPSState *env = &cpu->env;
 
     reset_info = g_malloc0(sizeof(ResetData));
     reset_info->cpu = cpu;
     reset_info->vector = env->active_tc.PC;
     qemu_register_reset(main_cpu_reset, reset_info);
-
-    /* Allocate RAM. */
-    memory_region_allocate_system_memory(ram, NULL, "mips_atjsim.ram",
-                                         ram_size);
-    memory_region_init_ram(bios, NULL, "mips_mipssim.bios", BIOS_SIZE,
-                           &error_fatal);
-    memory_region_add_subregion(address_space_mem, 0, ram);
-
-    memory_region_init_ram(iram, NULL, "mips_atjsim.iram", 96*1024,
-                           &error_fatal);
-    memory_region_add_subregion(address_space_mem, 0x14040000, iram);
-
-    memory_region_set_readonly(bios, true);
-
-
-    /* Map the BIOS / boot exception handler. */
-    memory_region_add_subregion(address_space_mem, 0x1fc00000LL, bios);
-    /* Load a BIOS / boot exception handler image. */
     if (bios_name == NULL)
         bios_name = BIOS_FILENAME;
     filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
@@ -333,75 +318,30 @@ mips_atjsim_init(MachineState *machine)
         reset_info->vector = load_kernel();
     }
 
-    /* Init CPU internal devices. */
-    cpu_mips_irq_init_cpu(cpu);
-    cpu_mips_clock_init(cpu);
-
-    /* PMU */
-    AtjPMUState *pmu = (AtjPMUState *)PMU_create(0x10000000);
-
-    /* INTC */
-    AtjINTCState *intc = (AtjINTCState *)INTC_create(0x10020000, cpu);
-
-    /* CMU */
-    AtjCMUState *cmu = (AtjCMUState *)CMU_create(0x10010000);
-
-    /* RTC */
-    RTC_create(0x10018000, cmu, intc);
-
-    /* SDC */
-    SDC_create(0x100b0000, intc);
-
-    /* YUV2RGB */
-    YUV2RGB_create(0x100f0000, pmu);
-
-    /* GPIO */
-    AtjGPIOState *gpio = (AtjGPIOState *)GPIO_create(0x101c0000);
-
-    /* DMAC */
-    AtjDMACState *dmac = (AtjDMACState *)DMAC_create(0x10060000, intc);
-
-    /* DAC */
-    AtjDACState *dac = (AtjDACState *)DAC_create(0x10100000);
-
-    qdev_connect_gpio_out(DEVICE(dac), 0, qdev_get_gpio_in(DEVICE(dmac), 0));
-
-    create_unimplemented_device("SRAMOC", 0x10030000, 0x08);
-    create_unimplemented_device("DSP", 0x10050000, 0x24);
-    create_unimplemented_device("SDRAMC", 0x10070000, 0x1c);
-    create_unimplemented_device("MCA", 0x10080000, 0xaf7);
-    create_unimplemented_device("NAND", 0x100a0000, 0x74);
-    create_unimplemented_device("MHA", 0x100c0000, 0x24);
-    create_unimplemented_device("UDC", 0x100e0000, 0x1000);
-    create_unimplemented_device("ADC", 0x10110000, 0x14);
-    create_unimplemented_device("UART1", 0x10160000, 0x14);
-    create_unimplemented_device("UART2", 0x10160020, 0x14);
-    create_unimplemented_device("I2C1", 0x10180000, 0x14);
-    create_unimplemented_device("I2C2", 0x10180020, 0x14);
-    create_unimplemented_device("KEY", 0x101a0000, 0x14);
-
     atj_button button_desc[13];
 
+    Atj213xSocState *soc = &e150->soc;
+
     /* HOLD defaults to 'not engaged' */
-    button_desc[0].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 10)); /* GPIOA10 */
+    button_desc[0].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(&soc->gpio), 10)); /* GPIOA10 */
     button_desc[0].type = KEY_BISTABLE;
     button_desc[0].keycode = 0x23; /* 'h' */
     button_desc[0].adc_val = 0;
 
     /* POWER */    
-    button_desc[1].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 8)); /* GPIOA8 */
+    button_desc[1].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(&soc->gpio), 8)); /* GPIOA8 */
     button_desc[1].type = KEY_MONOSTABLE;
     button_desc[1].keycode = 0x01; /* ESC */
     button_desc[1].adc_val = 0;
 
     /* VOL+ */
-    button_desc[2].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(gpio), 12)); /* GPIOA12 */
+    button_desc[2].irq = qemu_irq_invert(qdev_get_gpio_in(DEVICE(&soc->gpio), 12)); /* GPIOA12 */
     button_desc[2].type = KEY_MONOSTABLE;
     button_desc[2].keycode = 0xe049; /* pageup */
     button_desc[2].adc_val = 0;
 
     /* VOL- */
-    button_desc[3].irq = qdev_get_gpio_in(DEVICE(gpio), 32 + 31); /* GPIOB31 */
+    button_desc[3].irq = qdev_get_gpio_in(DEVICE(&soc->gpio), 32 + 31); /* GPIOB31 */
     button_desc[3].type = KEY_MONOSTABLE;
     button_desc[3].keycode = 0xe051; /* pagedown */
     button_desc[3].adc_val = 0;
@@ -437,13 +377,13 @@ mips_atjsim_init(MachineState *machine)
     button_desc[8].adc_val = 0x06;
 
     /* HEADPHONE DETECT defaults to inserted */
-    button_desc[9].irq = qdev_get_gpio_in(DEVICE(gpio), 26); /* GPIOA26 */
+    button_desc[9].irq = qdev_get_gpio_in(DEVICE(&soc->gpio), 26); /* GPIOA26 */
     button_desc[9].type = KEY_BISTABLE;
     button_desc[9].keycode = 0x19; /* 'p' */
     button_desc[9].adc_val = 0;
  
     /* SD DETECT defaults to inserted */
-    button_desc[10].irq = qdev_get_gpio_in(DEVICE(gpio), 32 + 22); /* GPIOB22 */
+    button_desc[10].irq = qdev_get_gpio_in(DEVICE(&soc->gpio), 32 + 22); /* GPIOB22 */
     button_desc[10].type = KEY_BISTABLE;
     button_desc[10].keycode = 0x1f; /* 's' */
     button_desc[10].adc_val = 0;
@@ -461,13 +401,18 @@ mips_atjsim_init(MachineState *machine)
     button_desc[12].adc_val = 0;
 
     /* Initialize input layer */
-    atj_button_init(13, button_desc, (void *)pmu);
-}
+    atj_button_init(13, button_desc, (void *)&soc->pmu);
+};
 
-static void mips_atjsim_machine_init(MachineClass *mc)
+static void IriverE150_machine_init(MachineClass *mc)
 {
-    mc->desc = "MIPS ATJsim platform";
-    mc->init = mips_atjsim_init;
+    mc->desc = "Iriver E150";
+    mc->init = IriverE150_init;
+    mc->no_parallel = 1;
+    mc->no_floppy = 1;
+    mc->no_cdrom = 1;
+    mc->max_cpus = 1;
+    mc->default_ram_size = 8 * 1024 * 1024;
 }
 
-DEFINE_MACHINE("atjsim", mips_atjsim_machine_init)
+DEFINE_MACHINE("IriverE150", IriverE150_machine_init)

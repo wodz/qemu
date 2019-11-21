@@ -1,6 +1,7 @@
 /* DAC Block */
 #ifndef ATJ213X_DAC_H
 #define ATJ213X_DAC_H
+#include "audio/audio.h"
 
 #define TYPE_ATJ213X_DAC "atj213x-DAC"
 #define ATJ213X_DAC(obj) \
@@ -33,6 +34,6 @@ struct AtjDACState {
 };
 typedef struct AtjDACState AtjDACState;
 
-DeviceState *DAC_create(hwaddr base);
+//DeviceState *DAC_create(hwaddr base);
 
 #endif

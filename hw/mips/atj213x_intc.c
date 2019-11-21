@@ -146,6 +146,7 @@ static void INTC_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = INTC_realize;
+    dc->user_creatable = false;
     dc->vmsd = &INTC_vmstate;
 }
 
@@ -162,24 +163,3 @@ static void INTC_register_types(void)
     type_register_static(&INTC_info);
 }
 type_init(INTC_register_types)
-
-DeviceState *INTC_create(hwaddr base, MIPSCPU *cpu)
-{
-    DeviceState *dev = qdev_create(NULL, TYPE_ATJ213X_INTC);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-
-    CPUMIPSState *mipscpu = &cpu->env;
-
-    /* void qdev_connect_gpio_out(DeviceState *dev, int n, qemu_irq pin);
-     * INTC out lines 0-4 are connected to MIPS irq lines 2-6
-     */
-    qdev_connect_gpio_out(dev, 0, mipscpu->irq[2]);
-    qdev_connect_gpio_out(dev, 1, mipscpu->irq[3]);
-    qdev_connect_gpio_out(dev, 2, mipscpu->irq[4]);
-    qdev_connect_gpio_out(dev, 3, mipscpu->irq[5]);
-    qdev_connect_gpio_out(dev, 4, mipscpu->irq[6]);
-
-    return dev;
-}
-

@@ -156,8 +156,8 @@ static void GPIO_class_init(ObjectClass *klass, void *data)
 
     dc->realize = GPIO_realize;
     dc->reset = GPIO_reset;
+    dc->user_creatable = false;
     dc->vmsd = &vmstate_GPIO;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo GPIO_info = {
@@ -174,14 +174,3 @@ static void GPIO_register_types(void)
 }
 
 type_init(GPIO_register_types)
-
-
-DeviceState *GPIO_create(hwaddr base)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_GPIO);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return dev;
-}
-

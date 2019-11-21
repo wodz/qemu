@@ -63,6 +63,6 @@ struct AtjINTCState {
 };
 typedef struct AtjINTCState AtjINTCState;
 
-DeviceState *INTC_create(hwaddr base, MIPSCPU *cpu);
+//DeviceState *INTC_create(hwaddr base, MIPSCPU *cpu);
 
 #endif

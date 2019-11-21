@@ -2,6 +2,7 @@
 
 #ifndef ATJ213X_SDC_H
 #define ATJ213X_SDC_H
+#include "hw/sd/sd.h"
 
 #include "atj213x_intc.h"
 
@@ -37,6 +38,6 @@ struct AtjSDCState {
 };
 typedef struct AtjSDCState AtjSDCState;
 
-DeviceState *SDC_create(hwaddr base, AtjINTCState *intc);
+//DeviceState *SDC_create(hwaddr base, AtjINTCState *intc);
 
 #endif

@@ -284,6 +284,7 @@ static void YUV2RGB_class_init(ObjectClass *klass, void *data)
 
     dc->realize = YUV2RGB_realize;
     dc->reset = YUV2RGB_reset;
+    dc->user_creatable = false;
     dc->vmsd = &YUV2RGB_vmstate;
 }
 
@@ -300,17 +301,3 @@ static void YUV2RGB_register_types(void)
     type_register_static(&YUV2RGB_info);
 }
 type_init(YUV2RGB_register_types)
-
-DeviceState *YUV2RGB_create(hwaddr base, AtjPMUState *pmu)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_YUV2RGB);
-
-    object_property_set_link(OBJECT(dev), OBJECT(pmu), "pmu", &error_abort);
-
-    qdev_init_nofail(dev);
-
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return dev;
-}
-

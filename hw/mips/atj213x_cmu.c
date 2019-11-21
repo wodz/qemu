@@ -53,6 +53,12 @@ static uint32_t CMU_get_clock_frequency(void *opaque, AtjClk clk)
    }
 }
 
+static bool CMU_clk_enabled(void *opaque, AtjClkEn dev)
+{
+    AtjCMUState *s = opaque;
+    return (s->regs[CMU_DEVCLKEN] & dev);
+}
+
 static uint64_t CMU_read(void *opaque, hwaddr  addr, unsigned size)
 {
     AtjCMUState *s = opaque;
@@ -115,6 +121,7 @@ static void CMU_realize(DeviceState *dev, Error **errp)
 {
     AtjCMUState *s = ATJ213X_CMU(dev);
     s->get_clock_frequency = CMU_get_clock_frequency;
+    s->clk_enabled = CMU_clk_enabled;
 }
 
 static const VMStateDescription vmstate_CMU = {
@@ -134,8 +141,8 @@ static void CMU_class_init(ObjectClass *klass, void *data)
 
     dc->realize = CMU_realize;
     dc->reset = CMU_reset;
+    dc->user_creatable = false;
     dc->vmsd = &vmstate_CMU;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo CMU_info = {
@@ -152,14 +159,3 @@ static void CMU_register_types(void)
 }
 
 type_init(CMU_register_types)
-
-
-DeviceState *CMU_create(hwaddr base)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_CMU);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return dev;
-}
-

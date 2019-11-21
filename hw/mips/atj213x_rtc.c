@@ -1,7 +1,6 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "cpu.h"
-#include "hw/ptimer.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/watchdog.h"
 #include "hw/sysbus.h"
@@ -254,8 +253,8 @@ static void RTC_class_init(ObjectClass *klass, void *data)
 
     dc->realize = RTC_realize;
     dc->reset = RTC_reset;
+    dc->user_creatable = false;
     dc->vmsd = &RTC_vmstate;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo RTC_info = {
@@ -271,24 +270,3 @@ static void RTC_register_types(void)
     type_register_static(&RTC_info);
 }
 type_init(RTC_register_types)
-
-DeviceState *RTC_create(hwaddr base, AtjCMUState *cmu, AtjINTCState *intc)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_RTC);
-    AtjRTCState *s = ATJ213X_RTC(dev);
-
-    object_property_set_link(OBJECT(s), OBJECT(cmu), "cmu", &error_abort);
-    
-    qdev_init_nofail(dev);
-
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-
-    /* connect RTC out irq lines to input mux of INTC */
-    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_T0));
-    qdev_connect_gpio_out(dev, 1, qdev_get_gpio_in(DEVICE(intc), IRQ_T1));
-    qdev_connect_gpio_out(dev, 2, qdev_get_gpio_in(DEVICE(intc), IRQ_WD));
-
-    return dev;
-}
-

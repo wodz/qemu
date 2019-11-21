@@ -3,7 +3,6 @@
 #include "hw/sysbus.h"
 #include "exec/log.h"
 #include "trace.h"
-#include "audio/audio.h"
 
 #include "atj213x_dac.h"
 
@@ -187,6 +186,7 @@ static void DAC_init(Object *obj)
     memset(s->buffer, 0x00, sizeof(s->buffer));
     s->buffer_level = 0;
 
+
     AUD_set_active_out(s->voice, 1);
 }
 
@@ -231,13 +231,3 @@ static void DAC_register_types(void)
 }
 
 type_init(DAC_register_types)
-
-DeviceState *DAC_create(hwaddr base)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_DAC);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return dev;
-}
-

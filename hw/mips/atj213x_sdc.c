@@ -2,7 +2,6 @@
 #include "qemu-common.h"
 #include "hw/sysbus.h"
 #include "exec/log.h"
-#include "hw/sd/sd.h"
 #include "sysemu/blockdev.h"
 #include "trace.h"
 
@@ -205,10 +204,6 @@ static void SDC_init(Object *obj)
     qdev_init_gpio_out(DEVICE(obj), &s->sdc_irq, 1);
 }
 
-static void SDC_realize(DeviceState *dev, Error **errp)
-{
-}
-
 static const VMStateDescription vmstate_SDC = {
     .name = TYPE_ATJ213X_SDC,
     .version_id = 1,
@@ -224,10 +219,9 @@ static void SDC_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
-    dc->realize = SDC_realize;
     dc->reset = SDC_reset;
+    dc->user_creatable = false;
     dc->vmsd = &vmstate_SDC;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo SDC_info = {
@@ -244,16 +238,3 @@ static void SDC_register_types(void)
 }
 
 type_init(SDC_register_types)
-
-DeviceState *SDC_create(hwaddr base, AtjINTCState *intc)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_SDC);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-
-    /* connect SDC irq line to input mux of INTC */
-    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_SD));
-    return dev;
-}
-

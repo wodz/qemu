@@ -4,6 +4,7 @@
 
 #ifndef ATJ213X_RTC_H
 #define ATJ213X_RTC_H
+#include "hw/ptimer.h"
 
 #include "atj213x_cmu.h"
 #include "atj213x_intc.h"

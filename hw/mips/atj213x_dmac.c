@@ -649,8 +649,8 @@ static void DMAC_class_init(ObjectClass *klass, void *data)
 
     dc->realize = DMAC_realize;
     dc->reset = DMAC_reset;
+    dc->user_creatable = false;
     dc->vmsd = &vmstate_DMAC;
-    //dc->props = milkymist_sysctl_properties;
 }
 
 static const TypeInfo DMAC_info = {
@@ -667,15 +667,3 @@ static void DMAC_register_types(void)
 }
 
 type_init(DMAC_register_types)
-
-DeviceState *DMAC_create(hwaddr base, AtjINTCState *intc)
-{
-    DeviceState *dev;
-    dev = qdev_create(NULL, TYPE_ATJ213X_DMAC);
-    qdev_init_nofail(dev);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-
-    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(DEVICE(intc), IRQ_DMA));
-    return dev;
-}
-
